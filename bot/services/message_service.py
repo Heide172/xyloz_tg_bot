@@ -34,9 +34,8 @@ def save_message(tg_message):
             sticker=tg_message.sticker.file_id if tg_message.sticker else None,
             media=tg_message.photo[-1].file_id if tg_message.photo else None,
             reply_to=tg_message.reply_to_message.message_id if tg_message.reply_to_message else None,
-            created_at=datetime.fromtimestamp(tg_message.date) if tg_message.date else datetime.utcnow(),
-            edited_at=datetime.fromtimestamp(tg_message.edit_date) if tg_message.edit_date else None,
-        )
+            created_at=tg_message.date if tg_message.date else datetime.utcnow(),
+            edited_at=tg_message.edit_date if tg_message.edit_date else None,        )
 
         session.add(msg)
         session.commit()
