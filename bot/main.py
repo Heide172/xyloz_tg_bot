@@ -3,7 +3,7 @@ import os
 from aiogram import Bot, Dispatcher
 from handlers.messages import router as message_router
 from handlers.reactions import router as reaction_router
-from handlers.stats_service import router as stats_router
+from handlers.statistic import router as stats_router
 from common.logger.logger import get_logger
 logger = get_logger(__name__)
 
