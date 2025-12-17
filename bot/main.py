@@ -10,10 +10,10 @@ logger = get_logger(__name__)
 async def main():
     bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
     dp = Dispatcher()
-
+    dp.include_router(stats_router)
     dp.include_router(message_router)
     dp.include_router(reaction_router)
-    dp.include_router(stats_router)
+
 
     logger.info("Bot started")
     await dp.start_polling(bot)
