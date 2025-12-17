@@ -3,6 +3,7 @@ import os
 from aiogram import Bot, Dispatcher
 from handlers.messages import router as message_router
 from handlers.reactions import router as reaction_router
+from handlers.stats_service import router as stats_router
 from common.logger.logger import get_logger
 logger = get_logger(__name__)
 
@@ -12,6 +13,7 @@ async def main():
 
     dp.include_router(message_router)
     dp.include_router(reaction_router)
+    dp.include_router(stats_router)
 
     logger.info("Bot started")
     await dp.start_polling(bot)
