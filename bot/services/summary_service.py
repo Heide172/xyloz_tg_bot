@@ -3,6 +3,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import datetime
+import time
 from typing import List
 from urllib import error, request
 
@@ -13,16 +14,19 @@ from common.models.message import Message
 from common.models.user import User
 
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-DEFAULT_MODELS = [
-    "google/gemma-2-9b-it:free",
-    "mistralai/mistral-7b-instruct:free",
-    "qwen/qwen-2.5-7b-instruct:free",
-]
+YANDEX_CHAT_COMPLETIONS_URL = os.getenv(
+    "YANDEX_CHAT_COMPLETIONS_URL",
+    "https://llm.api.cloud.yandex.net/v1/chat/completions",
+)
 MAX_MESSAGES = max(1, int(os.getenv("OPENROUTER_MAX_MESSAGES", "1000")))
 MAX_INPUT_TOKENS = int(os.getenv("OPENROUTER_MAX_INPUT_TOKENS", "12000"))
 MAX_CHARS_PER_MESSAGE = int(os.getenv("OPENROUTER_MAX_CHARS_PER_MESSAGE", "800"))
 MAX_CUSTOM_PROMPT_CHARS = int(os.getenv("OPENROUTER_MAX_CUSTOM_PROMPT_CHARS", "1200"))
+MAX_OUTPUT_TOKENS = int(
+    os.getenv("YANDEX_MAX_OUTPUT_TOKENS", os.getenv("OPENROUTER_MAX_OUTPUT_TOKENS", "1200"))
+)
+YANDEX_MAX_RETRIES = max(1, int(os.getenv("YANDEX_MAX_RETRIES", "2")))
+YANDEX_RETRY_DELAY_SEC = float(os.getenv("YANDEX_RETRY_DELAY_SEC", "1.5"))
 CHARS_PER_TOKEN = 4
 
 
@@ -33,15 +37,19 @@ class ChatMessage:
 
 
 SUMMARY_INSTRUCTION = (
-    "Сделай нейтральный деловой пересказ чата на русском. "
-    "Пиши только факты по делу, без оценок и без цитирования оскорблений. "
-    "Если есть троллинг/флейм/личные выпады, не пересказывай детали, "
-    "а кратко пометь как 'флуд/конфликт'. "
-    "Не придумывай факты. Не используй грубую лексику. "
-    "Не подменяй личности и имена: используй только имена/ники, встречающиеся во входных данных. "
-    "Если факт, имя или связь неочевидны, явно пиши 'не удалось достоверно определить'."
+    "Сделай краткий пересказ чата на русском. "
+    "Главное требование: не выдумывай факты, имена и события. "
+    "Используй только информацию из входных сообщений."
 )
 SUMMARY_PROMPT_KEY = "summary_instruction"
+SUMMARY_MODEL_KEY = "summary_model"
+DEFAULT_SUMMARY_MODEL = os.getenv("YANDEX_MODEL", "yandexgpt/latest")
+DEFAULT_AVAILABLE_MODELS = [
+    "yandexgpt/latest",
+    "gpt-oss-20b",
+    "gpt-oss-120b",
+    "qwen3-235b",
+]
 
 
 def _messages_for_model(prompt: str) -> list[dict]:
@@ -52,6 +60,72 @@ def _messages_for_model(prompt: str) -> list[dict]:
             "content": f"{get_summary_instruction()}\n\n{prompt}",
         }
     ]
+
+
+def _extract_text_payload(value) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+    return ""
+
+
+def _extract_message_content_from_body(body: dict) -> str:
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message", {}) if isinstance(first, dict) else {}
+    if not isinstance(message, dict):
+        return ""
+    content = _extract_text_payload(message.get("content"))
+    return content
+
+
+def _get_yandex_api_key() -> str:
+    value = (os.getenv("YANDEX_API_KEY") or "").strip()
+    if not value:
+        raise RuntimeError("YANDEX_API_KEY не задан")
+    return value
+
+
+def _get_yandex_folder_id() -> str:
+    value = (os.getenv("YANDEX_FOLDER_ID") or "").strip()
+    if not value:
+        raise RuntimeError("YANDEX_FOLDER_ID не задан")
+    return value
+
+
+def _resolve_model_uri(model_value: str, folder_id: str) -> str:
+    m = model_value.strip()
+    if m.startswith("gpt://"):
+        return m
+    return f"gpt://{folder_id}/{m}"
+
+
+def get_available_models() -> List[str]:
+    raw = (os.getenv("YANDEX_AVAILABLE_MODELS") or "").strip()
+    if raw:
+        items = [x.strip() for x in raw.split(",") if x.strip()]
+    else:
+        items = DEFAULT_AVAILABLE_MODELS[:]
+    # Deduplicate preserving order.
+    seen = set()
+    result: List[str] = []
+    for m in items:
+        if m in seen:
+            continue
+        seen.add(m)
+        result.append(m)
+    return result
 
 
 def _ensure_settings_table():
@@ -66,6 +140,46 @@ def get_summary_instruction() -> str:
         if row and row.value and row.value.strip():
             return row.value.strip()
         return SUMMARY_INSTRUCTION
+    finally:
+        session.close()
+
+
+def get_summary_model() -> str:
+    _ensure_settings_table()
+    session = SessionLocal()
+    try:
+        row = session.query(BotSetting).filter(BotSetting.key == SUMMARY_MODEL_KEY).first()
+        if row and row.value and row.value.strip():
+            return row.value.strip()
+        return DEFAULT_SUMMARY_MODEL
+    finally:
+        session.close()
+
+
+def set_summary_model(value: str, updated_by_tg_id: int | None = None):
+    _ensure_settings_table()
+    clean_value = value.strip()
+    if not clean_value:
+        raise ValueError("Модель не может быть пустой")
+
+    session = SessionLocal()
+    try:
+        row = session.query(BotSetting).filter(BotSetting.key == SUMMARY_MODEL_KEY).first()
+        if not row:
+            row = BotSetting(
+                key=SUMMARY_MODEL_KEY,
+                value=clean_value,
+                updated_by_tg_id=updated_by_tg_id,
+            )
+            session.add(row)
+        else:
+            row.value = clean_value
+            row.updated_by_tg_id = updated_by_tg_id
+            row.updated_at = datetime.utcnow()
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 
@@ -124,7 +238,10 @@ def _fit_messages_to_token_budget(messages: List[ChatMessage], max_input_tokens:
             break
         if not selected and line_tokens > max_input_tokens:
             selected.append(
-                ChatMessage(author=clipped.author, text=_truncate_text(clipped.text, max(80, MAX_CHARS_PER_MESSAGE // 4)))
+                ChatMessage(
+                    author=clipped.author,
+                    text=_truncate_text(clipped.text, max(80, MAX_CHARS_PER_MESSAGE // 4)),
+                )
             )
             break
         selected.append(clipped)
@@ -185,106 +302,78 @@ def get_recent_text_messages(chat_id: int, limit: int, exclude_message_id: int |
 
 
 def _call_openrouter_sync(prompt: str) -> str:
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY не задан")
+    api_key = _get_yandex_api_key()
+    folder_id = _get_yandex_folder_id()
+    model_uri = _resolve_model_uri(get_summary_model(), folder_id)
 
     payload = {
+        "model": model_uri,
         "temperature": 0.0,
-        "max_tokens": 250,
+        "max_tokens": MAX_OUTPUT_TOKENS,
         "messages": _messages_for_model(prompt),
     }
 
-    models = _resolve_models()
     last_error = ""
-    for model in models:
-        model_payload = dict(payload, model=model)
+    for attempt in range(YANDEX_MAX_RETRIES):
         req = request.Request(
-            OPENROUTER_URL,
-            data=json.dumps(model_payload).encode("utf-8"),
+            YANDEX_CHAT_COMPLETIONS_URL,
+            data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://xyloz-tg-bot.local",
-                "X-Title": "xyloz_tg_bot",
+                "OpenAI-Project": folder_id,
             },
             method="POST",
         )
-
         try:
             with request.urlopen(req, timeout=30) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
-            try:
-                return body["choices"][0]["message"]["content"].strip()
-            except (KeyError, IndexError, TypeError):
-                raise RuntimeError("Некорректный ответ LLM API")
+            text = _extract_message_content_from_body(body).strip()
+            if text:
+                return text
+            raise RuntimeError("Некорректный ответ Yandex API")
         except error.HTTPError as exc:
             details = exc.read().decode("utf-8", errors="ignore")
-            last_error = f"{model}: {exc.code} {details[:200]}"
-            if exc.code in (404, 429):
+            last_error = f"{model_uri}: {exc.code} {details[:200]}"
+            if exc.code == 429 and attempt + 1 < YANDEX_MAX_RETRIES:
+                time.sleep(YANDEX_RETRY_DELAY_SEC * (attempt + 1))
                 continue
-            raise RuntimeError(f"LLM API error: {last_error}")
+            raise RuntimeError(f"Yandex API error: {last_error}")
         except error.URLError as exc:
-            raise RuntimeError(f"LLM API недоступен: {exc.reason}")
+            raise RuntimeError(f"Yandex API недоступен: {exc.reason}")
 
-    raise RuntimeError(
-        "Не найдено доступных endpoint'ов для моделей. "
-        "Укажи рабочую модель в OPENROUTER_MODEL. "
-        f"Последняя ошибка: {last_error or 'n/a'}"
-    )
-
-
-def _resolve_models() -> List[str]:
-    models: List[str] = []
-    single = (os.getenv("OPENROUTER_MODEL") or "").strip()
-    if single:
-        models.append(single)
-    raw_fallbacks = (os.getenv("OPENROUTER_FALLBACK_MODELS") or "").strip()
-    if raw_fallbacks:
-        models.extend([x.strip() for x in raw_fallbacks.split(",") if x.strip()])
-    if not models:
-        models.extend(DEFAULT_MODELS)
-
-    # Deduplicate while preserving order.
-    seen = set()
-    result: List[str] = []
-    for m in models:
-        if m in seen:
-            continue
-        seen.add(m)
-        result.append(m)
-    return result
+    raise RuntimeError(f"Yandex API error: {last_error or 'unknown'}")
 
 
 def stream_openrouter_summary_sync(prompt: str, on_delta) -> str:
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY не задан")
+    api_key = _get_yandex_api_key()
+    folder_id = _get_yandex_folder_id()
+    model_uri = _resolve_model_uri(get_summary_model(), folder_id)
 
     payload = {
+        "model": model_uri,
         "temperature": 0.0,
-        "max_tokens": 250,
+        "max_tokens": MAX_OUTPUT_TOKENS,
         "stream": True,
         "messages": _messages_for_model(prompt),
     }
 
-    models = _resolve_models()
     last_error = ""
-    for model in models:
-        model_payload = dict(payload, model=model)
+    for attempt in range(YANDEX_MAX_RETRIES):
         req = request.Request(
-            OPENROUTER_URL,
-            data=json.dumps(model_payload).encode("utf-8"),
+            YANDEX_CHAT_COMPLETIONS_URL,
+            data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://xyloz-tg-bot.local",
-                "X-Title": "xyloz_tg_bot",
+                "OpenAI-Project": folder_id,
             },
             method="POST",
         )
 
         full_text = []
+        saw_done = False
+        hard_error = False
         try:
             with request.urlopen(req, timeout=60) as resp:
                 for raw_line in resp:
@@ -293,6 +382,7 @@ def stream_openrouter_summary_sync(prompt: str, on_delta) -> str:
                         continue
                     payload_line = line[5:].strip()
                     if payload_line == "[DONE]":
+                        saw_done = True
                         break
                     try:
                         chunk = json.loads(payload_line)
@@ -300,58 +390,63 @@ def stream_openrouter_summary_sync(prompt: str, on_delta) -> str:
                         continue
 
                     if isinstance(chunk, dict) and chunk.get("error"):
-                        last_error = f"{model}: {chunk.get('error')}"
+                        last_error = f"{model_uri}: {chunk.get('error')}"
+                        hard_error = True
                         break
 
-                    delta = (
-                        chunk.get("choices", [{}])[0]
-                        .get("delta", {})
-                        .get("content")
-                    )
-                    if not delta:
+                    choices = chunk.get("choices")
+                    if not isinstance(choices, list) or not choices:
                         continue
-                    full_text.append(delta)
-                    on_delta(delta)
+                    first_choice = choices[0] if isinstance(choices[0], dict) else {}
+                    finish_reason = first_choice.get("finish_reason")
+                    if finish_reason:
+                        saw_done = True
+                    delta = first_choice.get("delta", {}) if isinstance(first_choice.get("delta", {}), dict) else {}
+                    content_delta = _extract_text_payload(delta.get("content"))
+                    if content_delta:
+                        full_text.append(content_delta)
+                        on_delta(content_delta)
         except error.HTTPError as exc:
             details = exc.read().decode("utf-8", errors="ignore")
-            last_error = f"{model}: {exc.code} {details[:200]}"
-            if exc.code in (404, 429):
+            last_error = f"{model_uri}: {exc.code} {details[:200]}"
+            if exc.code == 429 and attempt + 1 < YANDEX_MAX_RETRIES:
+                time.sleep(YANDEX_RETRY_DELAY_SEC * (attempt + 1))
                 continue
-            raise RuntimeError(f"LLM API error: {last_error}")
+            raise RuntimeError(f"Yandex API error: {last_error}")
         except error.URLError as exc:
-            raise RuntimeError(f"LLM API недоступен: {exc.reason}")
+            raise RuntimeError(f"Yandex API недоступен: {exc.reason}")
 
         text = "".join(full_text).strip()
-        if text:
+        if text and not hard_error:
+            if saw_done:
+                return text
+            # Some providers may cut stream before terminal chunk; try non-stream completion
+            # to fetch finalized output instead of returning truncated text.
+            try:
+                completed = _call_openrouter_sync(prompt).strip()
+                if completed:
+                    return completed
+            except Exception:
+                pass
             return text
-        if not last_error:
-            last_error = f"{model}: empty streamed content"
+        last_error = last_error or (
+            f"{model_uri}: stream ended without final content "
+            "(possibly reasoning-only response)"
+        )
+        if hard_error:
+            break
 
-    raise RuntimeError(
-        "Не найдено доступных endpoint'ов для моделей. "
-        "Укажи рабочую модель в OPENROUTER_MODEL. "
-        f"Последняя ошибка: {last_error or 'n/a'}"
-    )
+    raise RuntimeError(f"Yandex API error: {last_error or 'unknown'}")
 
 
 def _build_prompt(messages: List[ChatMessage], custom_task: str | None = None) -> str:
     selected, omitted = _fit_messages_to_token_budget(messages, MAX_INPUT_TOKENS)
-    participants = sorted({m.author for m in selected if m.author})
     lines = [
         "Сделай краткий пересказ последних сообщений чата.",
-        "Формат ответа (строго):",
-        "1) Ключевые темы (2-4 пункта)",
-        "2) Решения и договоренности",
-        "3) Что осталось открытым",
-        "4) Следующие действия (если есть)",
-        "Ограничения ответа:",
-        "- Максимум 6 коротких пунктов суммарно",
-        "- Не перечисляй личные оскорбления и провокации",
-        "- Не делай шутливых или саркастических формулировок",
-        "- Не добавляй участников, которых нет во входных сообщениях",
-        "- При неуверенности используй формулировку 'не удалось достоверно определить'",
-        "",
-        f"Допустимые участники: {', '.join(participants) if participants else 'не определены'}",
+        "Формат: простой список по темам (4-8 пунктов).",
+        "Пиши кратко и по существу.",
+        "Не добавляй ссылки на сообщения.",
+        "Ответ должен быть завершенным: не обрывайся на полуслове или незакрытом пункте.",
         "",
     ]
     if custom_task:

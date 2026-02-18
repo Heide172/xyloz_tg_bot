@@ -2,19 +2,25 @@ import asyncio
 from queue import Empty, Queue
 
 from aiogram import Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
+from common.logger.logger import get_logger
 from services.admin_service import is_admin_tg_id
 from services.message_service import save_message
 from services.summary_service import (
     build_summary_prompt,
+    get_available_models,
+    get_summary_model,
     get_summary_instruction,
     parse_summary_count,
     reset_summary_instruction,
+    set_summary_model,
     set_summary_instruction,
     stream_openrouter_summary_sync,
 )
 
 router = Router()
+logger = get_logger(__name__)
 
 
 def _format_stream_text(limit: int, text: str, done: bool) -> str:
@@ -39,6 +45,16 @@ def _split_text_chunks(text: str, chunk_size: int = 3900) -> list[str]:
         chunks.append(text[i:end].rstrip())
         i = end
     return chunks
+
+
+async def _safe_edit_text(message: types.Message, text: str):
+    try:
+        await message.edit_text(text)
+    except TelegramBadRequest as exc:
+        msg = str(exc).lower()
+        if "message is not modified" in msg:
+            return
+        raise
 
 
 def _parse_custom_summary_args(command_text: str) -> tuple[int, str]:
@@ -77,10 +93,10 @@ async def _run_streaming_summary(msg: types.Message, limit: int, custom_task: st
             custom_task=custom_task,
         )
     except RuntimeError as exc:
-        await progress.edit_text(str(exc))
+        await _safe_edit_text(progress, str(exc))
         return
 
-    await progress.edit_text("Запускаю генерацию...")
+    await _safe_edit_text(progress, "Запускаю генерацию...")
     chunks: Queue[str] = Queue()
     done = False
     full_text = ""
@@ -100,7 +116,7 @@ async def _run_streaming_summary(msg: types.Message, limit: int, custom_task: st
             if changed:
                 candidate = _format_stream_text(limit, full_text, done=False)
                 if candidate != last_sent:
-                    await progress.edit_text(candidate)
+                    await _safe_edit_text(progress, candidate)
                     last_sent = candidate
             await asyncio.sleep(1.2)
 
@@ -119,17 +135,18 @@ async def _run_streaming_summary(msg: types.Message, limit: int, custom_task: st
         final_text = f"Краткий пересказ последних {limit} сообщений:\n\n{summary_text or full_text}"
         final_chunks = _split_text_chunks(final_text)
         if final_chunks[0] != last_sent:
-            await progress.edit_text(final_chunks[0])
+            await _safe_edit_text(progress, final_chunks[0])
         for extra in final_chunks[1:]:
             await msg.answer(extra)
     except RuntimeError as exc:
         done = True
         await updater_task
-        await progress.edit_text(f"Не удалось сделать пересказ: {exc}")
+        await _safe_edit_text(progress, f"Не удалось сделать пересказ: {exc}")
     except Exception:
         done = True
         await updater_task
-        await progress.edit_text("Не удалось сделать пересказ из-за внутренней ошибки.")
+        logger.error("summary handler internal error", exc_info=True)
+        await _safe_edit_text(progress, "Не удалось сделать пересказ из-за внутренней ошибки.")
 
 
 def _require_admin(msg: types.Message) -> bool:
@@ -167,6 +184,45 @@ async def prompt_reset_handler(msg: types.Message):
         return
     reset_summary_instruction(updated_by_tg_id=msg.from_user.id if msg.from_user else None)
     await msg.answer("Prompt сброшен на значение по умолчанию.")
+
+
+@router.message(Command("model_show"))
+async def model_show_handler(msg: types.Message):
+    if not _require_admin(msg):
+        await msg.answer("Команда доступна только администраторам бота.")
+        return
+    await msg.answer(f"Текущая модель пересказа: {get_summary_model()}")
+
+
+@router.message(Command("model_list"))
+async def model_list_handler(msg: types.Message):
+    if not _require_admin(msg):
+        await msg.answer("Команда доступна только администраторам бота.")
+        return
+    current = get_summary_model()
+    models = get_available_models()
+    lines = ["Доступные модели:"]
+    for model in models:
+        mark = " (текущая)" if model == current else ""
+        lines.append(f"- {model}{mark}")
+    await msg.answer("\n".join(lines))
+
+
+@router.message(Command("model_set"))
+async def model_set_handler(msg: types.Message):
+    if not _require_admin(msg):
+        await msg.answer("Команда доступна только администраторам бота.")
+        return
+    parts = (msg.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await msg.answer("Формат: /model_set <модель>, например /model_set yandexgpt/latest")
+        return
+    try:
+        set_summary_model(parts[1], updated_by_tg_id=msg.from_user.id if msg.from_user else None)
+    except ValueError as exc:
+        await msg.answer(str(exc))
+        return
+    await msg.answer("Модель пересказа обновлена.")
 
 
 @router.message(Command("summary"))
