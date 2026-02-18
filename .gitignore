@@ -1,2 +1,35 @@
 .env
 .venv/
+
+# Python cache / build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local logs and runtime files
+logs/
+*.log
+*.pid
+
+# Local databases / dumps
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+
+# Secrets and local env overrides
+.env.*
+!.env.example
+
+# IDE / OS files
+.idea/
+.vscode/
+.DS_Store
+
+# Telegram / session artifacts
+*.session
