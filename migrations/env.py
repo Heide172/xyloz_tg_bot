@@ -8,6 +8,7 @@ from common.db.base import Base
 from common.models.user import User
 from common.models.message import Message
 from common.models.reaction import Reaction
+from common.models.bot_setting import BotSetting
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
