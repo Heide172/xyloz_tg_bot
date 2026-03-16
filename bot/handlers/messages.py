@@ -6,6 +6,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from common.logger.logger import get_logger
 from services.admin_service import is_admin_tg_id
+from services.daily_pick_service import pick_participant_of_day
 from services.message_service import save_message
 from services.summary_service import (
     build_summary_prompt,
@@ -247,6 +248,43 @@ async def summary_custom_handler(msg: types.Message):
         return
 
     await _run_streaming_summary(msg, limit, custom_task=custom_prompt)
+
+
+@router.message(Command("hero"))
+@router.message(Command("participant"))
+async def participant_of_day_handler(msg: types.Message):
+    """
+    Picks a random participant among those who wrote at least once yesterday (MSK).
+    Result is fixed for the current MSK day.
+    """
+    try:
+        picked_by = msg.from_user.id if msg.from_user else None
+        result = pick_participant_of_day(chat_id=msg.chat.id, picked_by_tg_id=picked_by)
+    except RuntimeError as exc:
+        await msg.answer(str(exc))
+        return
+    except Exception:
+        logger.error("participant_of_day internal error", exc_info=True)
+        await msg.answer("Не удалось выбрать участника дня из-за внутренней ошибки.")
+        return
+
+    if result.winner_username:
+        who = f"@{result.winner_username}"
+    elif result.winner_fullname:
+        who = result.winner_fullname
+    else:
+        who = str(result.winner_tg_id)
+
+    status = "выбран" if result.is_new else "уже выбран"
+    await msg.answer(
+        "Участник дня: {who}\n"
+        "За день: {day}\n"
+        "Статус: {status} (сброс после 00:00 МСК)".format(
+            who=who,
+            day=result.candidates_day_msk.strftime("%d.%m.%Y"),
+            status=status,
+        )
+    )
 
 @router.message()
 async def message_handler(msg: types.Message):
