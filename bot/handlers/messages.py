@@ -250,8 +250,7 @@ async def summary_custom_handler(msg: types.Message):
     await _run_streaming_summary(msg, limit, custom_task=custom_prompt)
 
 
-@router.message(Command("hero"))
-@router.message(Command("participant"))
+@router.message(Command("fag"))
 async def participant_of_day_handler(msg: types.Message):
     """
     Picks a random participant among those who wrote at least once yesterday (MSK).
@@ -265,7 +264,7 @@ async def participant_of_day_handler(msg: types.Message):
         return
     except Exception:
         logger.error("participant_of_day internal error", exc_info=True)
-        await msg.answer("Не удалось выбрать участника дня из-за внутренней ошибки.")
+        await msg.answer("Не удалось выбрать пидора дня из-за внутренней ошибки.")
         return
 
     if result.winner_username:
@@ -277,7 +276,7 @@ async def participant_of_day_handler(msg: types.Message):
 
     status = "выбран" if result.is_new else "уже выбран"
     await msg.answer(
-        "Участник дня: {who}\n"
+        "Пидор дня: {who}\n"
         "За день: {day}\n"
         "Статус: {status} (сброс после 00:00 МСК)".format(
             who=who,
