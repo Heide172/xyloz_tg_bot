@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import distinct
@@ -35,12 +35,12 @@ def _msk_today() -> date:
     return datetime.now(tz=MSK).date()
 
 
-def _msk_day_range_utc_naive(day_msk: date) -> tuple[datetime, datetime]:
-    start_msk = datetime(day_msk.year, day_msk.month, day_msk.day, 0, 0, 0, tzinfo=MSK)
-    end_msk = start_msk + timedelta(days=1)
-    start_utc = start_msk.astimezone(timezone.utc).replace(tzinfo=None)
-    end_utc = end_msk.astimezone(timezone.utc).replace(tzinfo=None)
-    return start_utc, end_utc
+def _msk_day_range_naive(day_msk: date) -> tuple[datetime, datetime]:
+    # created_at хранится в session TZ Postgres (Europe/Moscow) как naive,
+    # поэтому окно считаем в MSK без конвертации.
+    start = datetime(day_msk.year, day_msk.month, day_msk.day)
+    end = start + timedelta(days=1)
+    return start, end
 
 
 def pick_participant_of_day(chat_id: int, picked_by_tg_id: int | None = None) -> PickResult:
@@ -70,14 +70,14 @@ def pick_participant_of_day(chat_id: int, picked_by_tg_id: int | None = None) ->
                 is_new=False,
             )
 
-        start_utc, end_utc = _msk_day_range_utc_naive(yesterday)
+        start, end = _msk_day_range_naive(yesterday)
         rows = (
             session.query(distinct(User.tg_id))
             .join(Message, Message.user_id == User.id)
             .filter(
                 Message.chat_id == chat_id,
-                Message.created_at >= start_utc,
-                Message.created_at < end_utc,
+                Message.created_at >= start,
+                Message.created_at < end,
             )
             .all()
         )
