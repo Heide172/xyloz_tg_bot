@@ -3,8 +3,18 @@ from common.models.message import Message
 from common.models.user import User
 from common.models.reaction import Reaction
 from common.logger.logger import get_logger
-from datetime import datetime
+from datetime import datetime, timezone
 import emoji
+
+
+def _to_datetime(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    return value
 
 logger = get_logger(__name__)
 
@@ -34,8 +44,9 @@ def save_message(tg_message):
             sticker=tg_message.sticker.file_id if tg_message.sticker else None,
             media=tg_message.photo[-1].file_id if tg_message.photo else None,
             reply_to=tg_message.reply_to_message.message_id if tg_message.reply_to_message else None,
-            created_at=tg_message.date if tg_message.date else datetime.utcnow(),
-            edited_at=tg_message.edit_date if tg_message.edit_date else None,        )
+            created_at=_to_datetime(tg_message.date) or datetime.utcnow(),
+            edited_at=_to_datetime(tg_message.edit_date),
+        )
 
         session.add(msg)
         session.commit()
