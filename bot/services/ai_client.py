@@ -20,7 +20,7 @@ YANDEX_CHAT_COMPLETIONS_URL = _env(
     "YANDEX_CHAT_COMPLETIONS_URL",
     default="https://llm.api.cloud.yandex.net/v1/chat/completions",
 )
-MAX_OUTPUT_TOKENS = int(_env("AI_MAX_OUTPUT_TOKENS", "YANDEX_MAX_OUTPUT_TOKENS", "OPENROUTER_MAX_OUTPUT_TOKENS", default="1200"))
+MAX_OUTPUT_TOKENS = int(_env("AI_MAX_OUTPUT_TOKENS", "YANDEX_MAX_OUTPUT_TOKENS", "OPENROUTER_MAX_OUTPUT_TOKENS", default="6000"))
 AI_MAX_RETRIES = max(1, int(_env("AI_MAX_RETRIES", "YANDEX_MAX_RETRIES", default="2")))
 AI_RETRY_DELAY_SEC = float(_env("AI_RETRY_DELAY_SEC", "YANDEX_RETRY_DELAY_SEC", default="1.5"))
 
@@ -120,14 +120,22 @@ def call_yandex(user_prompt: str, model: str, system_prompt: str | None = None) 
             # Попробуем извлечь подсказку из тела
             finish_reason = ""
             err_msg = ""
+            reasoning_len = 0
             if isinstance(body, dict):
                 choices = body.get("choices") or []
                 if choices and isinstance(choices[0], dict):
                     finish_reason = str(choices[0].get("finish_reason") or "")
+                    msg = choices[0].get("message") or {}
+                    if isinstance(msg, dict):
+                        rc = msg.get("reasoning_content") or ""
+                        if isinstance(rc, str):
+                            reasoning_len = len(rc)
                 err_msg = str(body.get("error") or body.get("message") or "")
             hint = ""
             if finish_reason:
-                hint = f" (finish_reason={finish_reason})"
+                hint += f" (finish_reason={finish_reason})"
+            if reasoning_len:
+                hint += f" (reasoning_chars={reasoning_len} — модель ушла в reasoning и не дошла до content; подними AI_MAX_OUTPUT_TOKENS)"
             if err_msg:
                 hint += f" (api_msg={err_msg[:200]})"
             raise RuntimeError(f"Yandex API вернул пустой ответ{hint}")
