@@ -217,21 +217,38 @@ def _build_prompt(ctx: CardContext) -> str:
     return "\n".join(lines)
 
 
-async def generate_user_card(chat_id: int, user: User) -> str:
+async def stream_user_card(
+    chat_id: int,
+    user: User,
+    on_delta=None,
+    on_reasoning=None,
+) -> tuple[str, str]:
+    """Возвращает (header, llm_text). Если у юзера нет сообщений — llm_text="" и header содержит сообщение."""
     stats = await asyncio.to_thread(_collect_stats, chat_id, user.id)
     if stats.total_messages == 0:
-        return f"У {_author_label(user)} нет сообщений в этом чате."
+        return f"У {_author_label(user)} нет сообщений в этом чате.", ""
 
     sample = await asyncio.to_thread(_collect_sample_texts, chat_id, user.id)
     ctx = CardContext(user=user, stats=stats, sample_texts=sample)
     prompt = _build_prompt(ctx)
 
     card_text = await asyncio.to_thread(
-        ai_client.call,
+        ai_client.stream,
         prompt,
         get_summary_model(),
+        on_delta or (lambda _d: None),
         prompts.load("user_card_system"),
+        on_reasoning,
     )
 
-    header = _format_stats_header(user, stats)
-    return f"🪪 Карточка участника\n\n{header}\n\n{card_text}"
+    header_lines = ["🪪 Карточка участника", "", _format_stats_header(user, stats)]
+    header = "\n".join(header_lines)
+    return header, card_text
+
+
+async def generate_user_card(chat_id: int, user: User) -> str:
+    """Совместимость. Без stream-callback'ов."""
+    header, content = await stream_user_card(chat_id, user)
+    if not content:
+        return header
+    return f"{header}\n\n{content}"

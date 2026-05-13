@@ -10,3 +10,4 @@ tqdm
 APScheduler>=3.10
 tzdata
 aiohttp>=3.9
+openai>=1.40

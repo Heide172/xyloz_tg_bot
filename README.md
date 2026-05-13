@@ -332,32 +332,25 @@ docker compose exec bot python scripts/nlp_backfill.py
 
 Для работы команды задайте переменные окружения:
 
-Бот поддерживает двух AI-провайдеров: **Yandex Cloud LLM** и **OpenCode Go** (https://opencode.ai/go). Роутер `bot/services/ai_client.py` сам решает куда слать запрос по префиксу модели:
-- модели с префиксом `opencode-go/` → OpenCode Go (open-source модели, без content-фильтра на мат, OpenAI-compatible API)
-- остальные → Yandex Cloud
+AI-провайдер: **OpenCode Go** (https://opencode.ai/go), OpenAI-compatible API. Клиент в `bot/services/ai_client.py` — через `openai` SDK, всегда стрим (чтобы не упираться в Cloudflare 524 при медленных моделях). Reasoning-модели (`qwen3.6-plus`, `gpt-oss-*`) отдают цепочку рассуждений отдельным каналом, бот при необходимости стримит её в сообщение.
 
-Переключение модели в чате: `/model_set <name>`. Например:
-- `/model_set yandexgpt/latest`
-- `/model_set opencode-go/qwen3.5-plus`
-- `/model_set opencode-go/deepseek-v4-flash`
+Переключение модели в чате (для админов бота): `/model_set <name>`. Например:
+- `/model_set opencode-go/qwen3.5-plus` — топ по лимиту (31 650 запросов / 5 ч)
+- `/model_set opencode-go/qwen3.6-plus` — новее, лимит 3 400 / 5 ч
+- `/model_set opencode-go/deepseek-v4-flash` — самый шустрый
 
 Env:
-* `YANDEX_API_KEY` — API ключ Yandex Cloud
-* `YANDEX_FOLDER_ID` — ID каталога Yandex Cloud
-* `YANDEX_MODEL` — Yandex модель по умолчанию (например `yandexgpt/latest`)
-* `YANDEX_AVAILABLE_MODELS` — список моделей для `/model_list` через запятую
-* `OPENCODE_API_KEY` — API ключ OpenCode Zen Go (нужен если используешь `opencode-go/*` модели)
+* `OPENCODE_API_KEY` — API ключ OpenCode Zen Go (обязательно)
 * `OPENCODE_BASE_URL` — переопределить base URL (по умолчанию `https://opencode.ai/zen/go/v1`)
-* `AI_MAX_MESSAGES` — верхняя граница для `N` в `/summary N` (опционально, по умолчанию `1000`)
-* `AI_MAX_INPUT_TOKENS` — лимит входного контекста (опционально, по умолчанию `12000`)
-* `AI_MAX_OUTPUT_TOKENS` — лимит выходных токенов ответа (опционально, по умолчанию `1200`)
-* `AI_MAX_CHARS_PER_MESSAGE` — лимит символов на одно сообщение (опционально, по умолчанию `800`)
-* `AI_MAX_CUSTOM_PROMPT_CHARS` — лимит длины кастомного запроса (опционально, по умолчанию `1200`)
-* `AI_MAX_RETRIES` — число попыток при `429` (опционально, по умолчанию `2`)
-* `AI_RETRY_DELAY_SEC` — базовая задержка между повторами в секундах (опционально, по умолчанию `1.5`)
-* `BOT_ADMIN_IDS` — список Telegram ID админов через запятую (например `12345,67890`)
-
-> Старые имена `OPENROUTER_MAX_*` и `YANDEX_MAX_OUTPUT_TOKENS` / `YANDEX_MAX_RETRIES` / `YANDEX_RETRY_DELAY_SEC` продолжают работать как fallback. При желании можно почистить `.env`.
+* `SUMMARY_MODEL` — модель по умолчанию (по умолчанию `opencode-go/qwen3.5-plus`)
+* `AI_AVAILABLE_MODELS` — список моделей для `/model_list` через запятую
+* `AI_MAX_MESSAGES` — верхняя граница для `N` в `/summary N` (по умолч. `1000`)
+* `AI_MAX_INPUT_TOKENS` — лимит входного контекста (по умолч. `12000`)
+* `AI_MAX_OUTPUT_TOKENS` — лимит выходных токенов (по умолч. `16000`)
+* `AI_MAX_CHARS_PER_MESSAGE` — лимит символов на одно сообщение (по умолч. `800`)
+* `AI_MAX_CUSTOM_PROMPT_CHARS` — лимит длины кастомного запроса (по умолч. `1200`)
+* `AI_CALL_TIMEOUT_SEC`, `AI_STREAM_TIMEOUT_SEC` — таймауты (по умолч. `300`)
+* `BOT_ADMIN_IDS` — список Telegram ID админов через запятую
 
 ## Этап 5 — Dashboard (7–14 дней)
 

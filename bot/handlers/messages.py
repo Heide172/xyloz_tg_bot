@@ -17,7 +17,7 @@ from services.summary_service import (
     reset_summary_instruction,
     set_summary_model,
     set_summary_instruction,
-    stream_yandex_completion,
+    stream_summary,
 )
 
 router = Router()
@@ -27,6 +27,13 @@ logger = get_logger(__name__)
 def _format_stream_text(limit: int, text: str, done: bool) -> str:
     body = text.strip() if text.strip() else "Генерирую..."
     return f"Краткий пересказ последних {limit} сообщений:\n\n{body}"
+
+
+def _format_reasoning_preview(reasoning: str, tail_limit: int = 400) -> str:
+    tail = reasoning.replace("\n", " ").strip()
+    if len(tail) > tail_limit:
+        tail = "…" + tail[-tail_limit:]
+    return f"🧠 Думаю над пересказом…\n\n{tail}"
 
 
 async def _safe_edit_text(message: types.Message, text: str):
@@ -118,9 +125,11 @@ async def _run_streaming_summary(msg: types.Message, limit: int, custom_task: st
         progress = await msg.answer(initial_text)
         logger.info("drafts unsupported for chat %s (%s), falling back to edit-throttling", chat_id, exc)
 
-    chunks: Queue[str] = Queue()
+    content_q: Queue[str] = Queue()
+    reasoning_q: Queue[str] = Queue()
     done = False
     full_text = ""
+    reasoning_text = ""
     last_pushed = initial_text
 
     async def push(text: str):
@@ -141,17 +150,26 @@ async def _run_streaming_summary(msg: types.Message, limit: int, custom_task: st
     interval = 0.5 if use_drafts else 1.2
 
     async def updater():
-        nonlocal full_text
-        while not done or not chunks.empty():
+        nonlocal full_text, reasoning_text
+        while not done or not content_q.empty() or not reasoning_q.empty():
             changed = False
             while True:
                 try:
-                    full_text += chunks.get_nowait()
+                    reasoning_text += reasoning_q.get_nowait()
+                    changed = True
+                except Empty:
+                    break
+            while True:
+                try:
+                    full_text += content_q.get_nowait()
                     changed = True
                 except Empty:
                     break
             if changed:
-                candidate = _format_stream_text(limit, full_text, done=False)[:4096]
+                if full_text.strip():
+                    candidate = _format_stream_text(limit, full_text, done=False)[:4096]
+                else:
+                    candidate = _format_reasoning_preview(reasoning_text)[:4096]
                 try:
                     await push(candidate)
                 except Exception:
@@ -167,12 +185,13 @@ async def _run_streaming_summary(msg: types.Message, limit: int, custom_task: st
     updater_task = asyncio.create_task(updater())
     try:
         summary_text = await asyncio.to_thread(
-            stream_yandex_completion,
+            stream_summary,
             prompt,
-            chunks.put,
+            content_q.put,
+            reasoning_q.put,
         )
-        while not chunks.empty():
-            full_text += chunks.get_nowait()
+        while not content_q.empty():
+            full_text += content_q.get_nowait()
         done = True
         await updater_task
 

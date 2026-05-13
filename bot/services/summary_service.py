@@ -36,12 +36,8 @@ class ChatMessage:
 
 SUMMARY_PROMPT_KEY = "summary_instruction"
 SUMMARY_MODEL_KEY = "summary_model"
-DEFAULT_SUMMARY_MODEL = os.getenv("YANDEX_MODEL", "yandexgpt/latest")
+DEFAULT_SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "opencode-go/qwen3.5-plus")
 DEFAULT_AVAILABLE_MODELS = [
-    "yandexgpt/latest",
-    "gpt-oss-20b",
-    "gpt-oss-120b",
-    "qwen3-235b",
     "opencode-go/qwen3.5-plus",
     "opencode-go/qwen3.6-plus",
     "opencode-go/deepseek-v4-flash",
@@ -53,7 +49,7 @@ DEFAULT_AVAILABLE_MODELS = [
 
 
 def get_available_models() -> List[str]:
-    raw = (os.getenv("YANDEX_AVAILABLE_MODELS") or "").strip()
+    raw = (os.getenv("AI_AVAILABLE_MODELS") or "").strip()
     if raw:
         items = [x.strip() for x in raw.split(",") if x.strip()]
     else:
@@ -262,12 +258,13 @@ def _build_prompt(messages: List[ChatMessage], custom_task: str | None = None) -
     return "\n".join(lines)
 
 
-def stream_yandex_completion(prompt: str, on_delta) -> str:
+def stream_summary(prompt: str, on_delta, on_reasoning=None) -> str:
     return ai_client.stream(
         prompt,
         model=get_summary_model(),
         on_delta=on_delta,
         system_prompt=get_summary_instruction(),
+        on_reasoning=on_reasoning,
     )
 
 
@@ -289,6 +286,7 @@ async def summarize_recent_messages(
         get_summary_instruction(),
     )
     return summary
+
 
 
 def build_summary_prompt(

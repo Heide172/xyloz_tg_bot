@@ -721,15 +721,31 @@ async def build_digest_payload(chat_id: int, days: int = DIGEST_DEFAULT_DAYS) ->
     return header, prompt, data
 
 
-async def generate_digest(chat_id: int, days: int = DIGEST_DEFAULT_DAYS) -> str:
+async def stream_digest(
+    chat_id: int,
+    days: int = DIGEST_DEFAULT_DAYS,
+    on_delta=None,
+    on_reasoning=None,
+) -> tuple[str, str]:
+    """Возвращает (header, llm_text). Если данных нет — llm_text="" и header содержит сообщение."""
     header, prompt, data = await build_digest_payload(chat_id, days)
     if data is None:
-        return header
+        return header, ""
 
     digest_text = await asyncio.to_thread(
-        ai_client.call,
+        ai_client.stream,
         prompt,
         get_summary_model(),
+        on_delta or (lambda _d: None),
         prompts.load("digest_system"),
+        on_reasoning,
     )
-    return f"{header}\n\n{digest_text}"
+    return header, digest_text
+
+
+async def generate_digest(chat_id: int, days: int = DIGEST_DEFAULT_DAYS) -> str:
+    """Совместимость для weekly scheduler. Без stream-callback'ов."""
+    header, content = await stream_digest(chat_id, days)
+    if not content:
+        return header
+    return f"{header}\n\n{content}"
