@@ -202,6 +202,8 @@ def call_opencode(user_prompt: str, model: str, system_prompt: str | None = None
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "xyloz-tg-bot/1.0 (+https://github.com/Heide172/xyloz_tg_bot)",
                 "HTTP-Referer": "https://github.com/Heide172/xyloz_tg_bot",
                 "X-Title": "xyloz_tg_bot",
             },
@@ -255,6 +257,8 @@ def stream_opencode(
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "xyloz-tg-bot/1.0 (+https://github.com/Heide172/xyloz_tg_bot)",
                 "HTTP-Referer": "https://github.com/Heide172/xyloz_tg_bot",
                 "X-Title": "xyloz_tg_bot",
             },
