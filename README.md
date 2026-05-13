@@ -332,10 +332,22 @@ docker compose exec bot python scripts/nlp_backfill.py
 
 Для работы команды задайте переменные окружения:
 
-* `YANDEX_API_KEY` — API ключ Yandex Cloud (обязательно)
-* `YANDEX_FOLDER_ID` — ID каталога Yandex Cloud (обязательно)
-* `YANDEX_MODEL` — модель по умолчанию (например `yandexgpt/latest`)
+Бот поддерживает двух AI-провайдеров: **Yandex Cloud LLM** и **OpenCode Go** (https://opencode.ai/go). Роутер `bot/services/ai_client.py` сам решает куда слать запрос по префиксу модели:
+- модели с префиксом `opencode-go/` → OpenCode Go (open-source модели, без content-фильтра на мат, OpenAI-compatible API)
+- остальные → Yandex Cloud
+
+Переключение модели в чате: `/model_set <name>`. Например:
+- `/model_set yandexgpt/latest`
+- `/model_set opencode-go/qwen3.5-plus`
+- `/model_set opencode-go/deepseek-v4-flash`
+
+Env:
+* `YANDEX_API_KEY` — API ключ Yandex Cloud
+* `YANDEX_FOLDER_ID` — ID каталога Yandex Cloud
+* `YANDEX_MODEL` — Yandex модель по умолчанию (например `yandexgpt/latest`)
 * `YANDEX_AVAILABLE_MODELS` — список моделей для `/model_list` через запятую
+* `OPENCODE_API_KEY` — API ключ OpenCode Zen Go (нужен если используешь `opencode-go/*` модели)
+* `OPENCODE_BASE_URL` — переопределить base URL (по умолчанию `https://opencode.ai/zen/go/v1`)
 * `AI_MAX_MESSAGES` — верхняя граница для `N` в `/summary N` (опционально, по умолчанию `1000`)
 * `AI_MAX_INPUT_TOKENS` — лимит входного контекста (опционально, по умолчанию `12000`)
 * `AI_MAX_OUTPUT_TOKENS` — лимит выходных токенов ответа (опционально, по умолчанию `1200`)

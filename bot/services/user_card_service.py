@@ -227,7 +227,7 @@ async def generate_user_card(chat_id: int, user: User) -> str:
     prompt = _build_prompt(ctx)
 
     card_text = await asyncio.to_thread(
-        ai_client.call_yandex,
+        ai_client.call,
         prompt,
         get_summary_model(),
         prompts.load("user_card_system"),

@@ -42,6 +42,13 @@ DEFAULT_AVAILABLE_MODELS = [
     "gpt-oss-20b",
     "gpt-oss-120b",
     "qwen3-235b",
+    "opencode-go/qwen3.5-plus",
+    "opencode-go/qwen3.6-plus",
+    "opencode-go/deepseek-v4-flash",
+    "opencode-go/deepseek-v4-pro",
+    "opencode-go/mimo-v2.5-pro",
+    "opencode-go/kimi-k2.6",
+    "opencode-go/glm-5.1",
 ]
 
 
@@ -256,7 +263,7 @@ def _build_prompt(messages: List[ChatMessage], custom_task: str | None = None) -
 
 
 def stream_yandex_completion(prompt: str, on_delta) -> str:
-    return ai_client.stream_yandex(
+    return ai_client.stream(
         prompt,
         model=get_summary_model(),
         on_delta=on_delta,
@@ -276,7 +283,7 @@ async def summarize_recent_messages(
 
     prompt = _build_prompt(messages, custom_task=custom_task)
     summary = await asyncio.to_thread(
-        ai_client.call_yandex,
+        ai_client.call,
         prompt,
         get_summary_model(),
         get_summary_instruction(),

@@ -36,26 +36,26 @@ INNER_PEAK_TOP_K = 2
 INNER_PEAK_CONTEXT_MIN = 3
 
 # Reply chains
-REPLY_CHAIN_TOP = 5
-REPLY_CHAIN_MAX_REPLIES = 8
+REPLY_CHAIN_TOP = 4
+REPLY_CHAIN_MAX_REPLIES = 6
 REPLY_CHAIN_MIN_REPLIES = 2
 
 # Characteristic n-grams
-CHARACTERISTIC_UNIGRAMS_TOP = 8
-CHARACTERISTIC_BIGRAMS_TOP = 8
+CHARACTERISTIC_UNIGRAMS_TOP = 6
+CHARACTERISTIC_BIGRAMS_TOP = 6
 UNIGRAM_MIN_COUNT = 4
 BIGRAM_MIN_COUNT = 2
 
 # Quote candidates
-QUOTE_CANDIDATES_TOP = 10
+QUOTE_CANDIDATES_TOP = 8
 QUOTE_MIN_WORDS = 5
 QUOTE_MIN_CHARS = 30
 
 # Sampling
 SAMPLE_MIN_WORDS = 5
 SAMPLE_MIN_CHARS = 25
-BURST_SAMPLE_PER_WINDOW = 30
-BACKGROUND_SAMPLE_LIMIT = 50
+BURST_SAMPLE_PER_WINDOW = 15
+BACKGROUND_SAMPLE_LIMIT = 25
 TOP_AUTHOR_LIMIT = 5
 
 MSK = ZoneInfo("Europe/Moscow")
@@ -727,7 +727,7 @@ async def generate_digest(chat_id: int, days: int = DIGEST_DEFAULT_DAYS) -> str:
         return header
 
     digest_text = await asyncio.to_thread(
-        ai_client.call_yandex,
+        ai_client.call,
         prompt,
         get_summary_model(),
         prompts.load("digest_system"),
