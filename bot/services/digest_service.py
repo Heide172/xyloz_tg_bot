@@ -271,20 +271,51 @@ def _find_inner_peaks(in_window: list[RawMessage]) -> list[tuple[datetime, datet
     return [(s, s + slot, c) for s, c in top]
 
 
-def _maybe_narrow_burst(burst: tuple[datetime, datetime], in_window: list[RawMessage]) -> tuple[datetime, datetime]:
+SPLIT_PEAK_GAP_MIN = 60   # если пики разнесены больше — дробим окно
+SPLIT_PEAK_CONTEXT_MIN = 15  # контекст вокруг каждого пика при дроблении
+
+
+def _split_or_narrow_burst(
+    burst: tuple[datetime, datetime],
+    in_window: list[RawMessage],
+) -> list[tuple[datetime, datetime]]:
+    """Возвращает список под-окон.
+
+    - Если окно <= BURST_MAX_WIDTH_HOURS — оставляем как есть.
+    - Если есть 2+ пика и они разнесены >= SPLIT_PEAK_GAP_MIN — **дробим** на отдельные под-окна.
+    - Если пики близко — сужаем до объединения пиков ± контекст.
+    - Если пиков нет — оставляем как есть.
+    """
     start, end = burst
-    width = end - start
-    if width <= timedelta(hours=BURST_MAX_WIDTH_HOURS):
-        return burst
+    if end - start <= timedelta(hours=BURST_MAX_WIDTH_HOURS):
+        return [burst]
+
     peaks = _find_inner_peaks(in_window)
     if not peaks:
-        return burst
+        return [burst]
+
+    if len(peaks) >= 2:
+        first_end = peaks[0][1]
+        second_start = peaks[1][0]
+        gap = second_start - first_end
+        if gap >= timedelta(minutes=SPLIT_PEAK_GAP_MIN):
+            ctx = timedelta(minutes=SPLIT_PEAK_CONTEXT_MIN)
+            sub_windows = []
+            for p_start, p_end, _ in peaks:
+                sub_start = max(p_start - ctx, start)
+                sub_end = min(p_end + ctx, end)
+                if sub_end - sub_start >= timedelta(minutes=INNER_PEAK_SLOT_MIN):
+                    sub_windows.append((sub_start, sub_end))
+            if sub_windows:
+                return sub_windows
+
+    # Пики близко друг к другу — сужаем до их объединения.
     ctx = timedelta(minutes=INNER_PEAK_CONTEXT_MIN)
     new_start = max(min(p[0] for p in peaks) - ctx, start)
     new_end = min(max(p[1] for p in peaks) + ctx, end)
     if new_end - new_start < timedelta(minutes=INNER_PEAK_SLOT_MIN):
-        return burst
-    return (new_start, new_end)
+        return [burst]
+    return [(new_start, new_end)]
 
 
 # ---------------- reply chains ----------------
@@ -419,11 +450,6 @@ def _build_burst_context(
             char_unigrams=[], char_bigrams=[], reply_chains=[],
         )
 
-    new_window = _maybe_narrow_burst(window, in_window)
-    if new_window != window:
-        start, end = new_window
-        in_window = [m for m in in_window if start <= m.created_at < end]
-
     author_counts = Counter(m.author for m in in_window)
     top_authors = author_counts.most_common(TOP_AUTHOR_LIMIT)
     inner_peaks = _find_inner_peaks(in_window)
@@ -481,13 +507,21 @@ def _build_digest_data(messages: list[RawMessage], period_start: datetime, perio
     active_users = len(author_counts)
 
     initial_windows = _find_hour_bursts(messages)
+
+    # Дробим / сужаем каждое исходное окно до его реальных пиков.
+    refined_windows: list[tuple[datetime, datetime]] = []
+    for w in initial_windows:
+        in_w = [m for m in messages if w[0] <= m.created_at < w[1]]
+        refined_windows.extend(_split_or_narrow_burst(w, in_w))
+    refined_windows.sort(key=lambda x: x[0])
+
     bg_msgs_initial = [
         m for m in messages
-        if not any(s <= m.created_at < e for s, e in initial_windows)
+        if not any(s <= m.created_at < e for s, e in refined_windows)
     ]
 
     bursts: list[BurstContext] = []
-    for w in initial_windows:
+    for w in refined_windows:
         ctx = _build_burst_context(messages, w, bg_msgs_initial)
         if ctx.count > 0:
             bursts.append(ctx)
