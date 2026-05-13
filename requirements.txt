@@ -11,3 +11,6 @@ APScheduler>=3.10
 tzdata
 aiohttp>=3.9
 openai>=1.40
+numpy>=1.24
+scikit-learn>=1.4
+pgvector>=0.3

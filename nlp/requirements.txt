@@ -5,3 +5,4 @@ transformers>=4.40
 torch>=2.2
 sentencepiece
 protobuf
+sentence-transformers>=2.7

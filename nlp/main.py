@@ -15,8 +15,10 @@ from transformers import (
 
 SENTIMENT_MODEL = os.getenv("NLP_SENTIMENT_MODEL", "seara/rubert-tiny2-russian-sentiment")
 TOXICITY_MODEL = os.getenv("NLP_TOXICITY_MODEL", "cointegrated/rubert-tiny-toxicity")
+EMBED_MODEL = os.getenv("NLP_EMBED_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
 MAX_LENGTH = int(os.getenv("NLP_MAX_LENGTH", "256"))
 BATCH_SIZE = int(os.getenv("NLP_BATCH_SIZE", "32"))
+EMBED_BATCH_SIZE = int(os.getenv("NLP_EMBED_BATCH_SIZE", "64"))
 
 logger = logging.getLogger("nlp")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -50,6 +52,11 @@ def _load_models():
         max_length=MAX_LENGTH,
         top_k=None,
     )
+
+    logger.info("loading embed model: %s", EMBED_MODEL)
+    from sentence_transformers import SentenceTransformer
+
+    _state["embed"] = SentenceTransformer(EMBED_MODEL, device="cpu")
     logger.info("models ready")
 
 
@@ -112,6 +119,35 @@ def _extract_toxicity_prob(rows: list[dict]) -> float:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "models_loaded": bool(_state)}
+
+
+class EmbedRequest(BaseModel):
+    texts: list[str] = Field(default_factory=list)
+
+
+class EmbedResponse(BaseModel):
+    embeddings: list[list[float]]
+    dim: int
+
+
+@app.post("/embed/batch", response_model=EmbedResponse)
+def embed_batch(req: EmbedRequest) -> EmbedResponse:
+    texts = [t.strip() for t in req.texts]
+    if not texts:
+        return EmbedResponse(embeddings=[], dim=0)
+    model = _state["embed"]
+    with torch.no_grad():
+        vectors = model.encode(
+            texts,
+            batch_size=EMBED_BATCH_SIZE,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+    return EmbedResponse(
+        embeddings=[v.tolist() for v in vectors],
+        dim=int(vectors.shape[1]) if len(vectors) else 0,
+    )
 
 
 @app.post("/classify/batch", response_model=BatchResponse)

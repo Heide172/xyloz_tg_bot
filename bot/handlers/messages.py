@@ -2,7 +2,7 @@ import asyncio
 from queue import Empty, Queue
 
 from aiogram import Router, types
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.filters import Command
 from common.logger.logger import get_logger
 from services.admin_service import is_admin_tg_id
@@ -136,18 +136,22 @@ async def _run_streaming_summary(msg: types.Message, limit: int, custom_task: st
         nonlocal last_pushed
         if text == last_pushed:
             return
-        if use_drafts:
-            await msg.bot.send_message_draft(
-                chat_id=chat_id,
-                draft_id=draft_id,
-                text=text,
-                message_thread_id=thread_id,
-            )
-        else:
-            await _safe_edit_text(progress, text)
-        last_pushed = text
+        try:
+            if use_drafts:
+                await msg.bot.send_message_draft(
+                    chat_id=chat_id,
+                    draft_id=draft_id,
+                    text=text,
+                    message_thread_id=thread_id,
+                )
+            else:
+                await _safe_edit_text(progress, text)
+            last_pushed = text
+        except TelegramRetryAfter as exc:
+            logger.warning("summary flood control: sleep %ss", exc.retry_after)
+            await asyncio.sleep(exc.retry_after)
 
-    interval = 0.5 if use_drafts else 1.2
+    interval = 1.0 if use_drafts else 2.5
 
     async def updater():
         nonlocal full_text, reasoning_text
@@ -172,6 +176,9 @@ async def _run_streaming_summary(msg: types.Message, limit: int, custom_task: st
                     candidate = _format_reasoning_preview(reasoning_text)[:4096]
                 try:
                     await push(candidate)
+                except TelegramRetryAfter as exc:
+                    logger.warning("summary updater flood: sleep %ss", exc.retry_after)
+                    await asyncio.sleep(exc.retry_after)
                 except Exception:
                     logger.exception("stream update failed")
             await asyncio.sleep(interval)

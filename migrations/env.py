@@ -10,6 +10,7 @@ from common.models.message import Message
 from common.models.reaction import Reaction
 from common.models.bot_setting import BotSetting
 from common.models.daily_pick import DailyPick
+from common.models.message_embedding import MessageEmbedding
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

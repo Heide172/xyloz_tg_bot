@@ -2,7 +2,7 @@ import asyncio
 from queue import Empty, Queue
 
 from aiogram import Router, types
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.filters import Command
 
 from common.logger.logger import get_logger
@@ -15,7 +15,7 @@ router = Router()
 logger = get_logger(__name__)
 
 MAX_TG_TEXT = 3900
-UPDATE_INTERVAL_SEC = 1.2
+UPDATE_INTERVAL_SEC = 3.0
 REASONING_TAIL_CHARS = 400
 
 
@@ -93,6 +93,9 @@ async def cmd_card(msg: types.Message):
         try:
             await _safe_edit(progress, text)
             last_pushed = text
+        except TelegramRetryAfter as exc:
+            logger.warning("card flood control: sleep %ss", exc.retry_after)
+            await asyncio.sleep(exc.retry_after)
         except Exception:
             logger.exception("card progress update failed")
 

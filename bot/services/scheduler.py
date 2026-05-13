@@ -11,6 +11,7 @@ from services.digest_service import (
     generate_digest,
     has_data_for_period,
 )
+from services.embed_worker import embed_pending_once
 from services.nlp_classifier import classify_pending_once
 
 logger = get_logger(__name__)
@@ -68,6 +69,14 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         max_instances=1,
         next_run_time=None,
     )
+    scheduler.add_job(
+        embed_pending_once,
+        trigger=IntervalTrigger(seconds=45),
+        id="embed_pending",
+        coalesce=True,
+        max_instances=1,
+        next_run_time=None,
+    )
     scheduler.start()
-    logger.info("scheduler started: weekly digest at Mon 09:00 MSK, nlp classify every 30s")
+    logger.info("scheduler started: weekly digest at Mon 09:00 MSK, nlp classify every 30s, embed every 45s")
     return scheduler
