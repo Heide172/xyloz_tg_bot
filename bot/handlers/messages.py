@@ -17,7 +17,7 @@ from services.summary_service import (
     reset_summary_instruction,
     set_summary_model,
     set_summary_instruction,
-    stream_openrouter_summary_sync,
+    stream_yandex_completion,
 )
 
 router = Router()
@@ -26,9 +26,16 @@ logger = get_logger(__name__)
 
 def _format_stream_text(limit: int, text: str, done: bool) -> str:
     body = text.strip() if text.strip() else "Генерирую..."
-    postfix = "" if done else "\n\n⏳ Генерирую..."
-    result = f"Краткий пересказ последних {limit} сообщений:\n\n{body}{postfix}"
-    return result[:3900]
+    return f"Краткий пересказ последних {limit} сообщений:\n\n{body}"
+
+
+async def _safe_edit_text(message: types.Message, text: str):
+    try:
+        await message.edit_text(text)
+    except TelegramBadRequest as exc:
+        if "message is not modified" in str(exc).lower():
+            return
+        raise
 
 
 def _split_text_chunks(text: str, chunk_size: int = 3900) -> list[str]:
@@ -46,16 +53,6 @@ def _split_text_chunks(text: str, chunk_size: int = 3900) -> list[str]:
         chunks.append(text[i:end].rstrip())
         i = end
     return chunks
-
-
-async def _safe_edit_text(message: types.Message, text: str):
-    try:
-        await message.edit_text(text)
-    except TelegramBadRequest as exc:
-        msg = str(exc).lower()
-        if "message is not modified" in msg:
-            return
-        raise
 
 
 def _parse_custom_summary_args(command_text: str) -> tuple[int, str]:
@@ -84,27 +81,67 @@ def _parse_custom_summary_args(command_text: str) -> tuple[int, str]:
     return limit, prompt
 
 
+def _is_draft_unsupported(exc: TelegramBadRequest) -> bool:
+    return "TEXTDRAFT" in str(exc).upper()
+
+
 async def _run_streaming_summary(msg: types.Message, limit: int, custom_task: str | None = None):
-    progress = await msg.answer("Собираю контекст...")
+    chat_id = msg.chat.id
+    thread_id = msg.message_thread_id
+    draft_id = msg.message_id  # уникальный non-zero per chat
+
     try:
         prompt = build_summary_prompt(
-            chat_id=msg.chat.id,
+            chat_id=chat_id,
             limit=limit,
             exclude_message_id=msg.message_id,
             custom_task=custom_task,
         )
     except RuntimeError as exc:
-        await _safe_edit_text(progress, str(exc))
+        await msg.answer(str(exc))
         return
 
-    await _safe_edit_text(progress, "Запускаю генерацию...")
+    use_drafts = True
+    progress: types.Message | None = None
+    initial_text = "Собираю контекст..."
+    try:
+        await msg.bot.send_message_draft(
+            chat_id=chat_id,
+            draft_id=draft_id,
+            text=initial_text,
+            message_thread_id=thread_id,
+        )
+    except TelegramBadRequest as exc:
+        if not _is_draft_unsupported(exc):
+            raise
+        use_drafts = False
+        progress = await msg.answer(initial_text)
+        logger.info("drafts unsupported for chat %s (%s), falling back to edit-throttling", chat_id, exc)
+
     chunks: Queue[str] = Queue()
     done = False
     full_text = ""
-    last_sent = ""
+    last_pushed = initial_text
+
+    async def push(text: str):
+        nonlocal last_pushed
+        if text == last_pushed:
+            return
+        if use_drafts:
+            await msg.bot.send_message_draft(
+                chat_id=chat_id,
+                draft_id=draft_id,
+                text=text,
+                message_thread_id=thread_id,
+            )
+        else:
+            await _safe_edit_text(progress, text)
+        last_pushed = text
+
+    interval = 0.5 if use_drafts else 1.2
 
     async def updater():
-        nonlocal full_text, done, last_sent
+        nonlocal full_text
         while not done or not chunks.empty():
             changed = False
             while True:
@@ -113,18 +150,24 @@ async def _run_streaming_summary(msg: types.Message, limit: int, custom_task: st
                     changed = True
                 except Empty:
                     break
-
             if changed:
-                candidate = _format_stream_text(limit, full_text, done=False)
-                if candidate != last_sent:
-                    await _safe_edit_text(progress, candidate)
-                    last_sent = candidate
-            await asyncio.sleep(1.2)
+                candidate = _format_stream_text(limit, full_text, done=False)[:4096]
+                try:
+                    await push(candidate)
+                except Exception:
+                    logger.exception("stream update failed")
+            await asyncio.sleep(interval)
+
+    async def report_error(text: str):
+        if progress is not None:
+            await _safe_edit_text(progress, text)
+        else:
+            await msg.answer(text)
 
     updater_task = asyncio.create_task(updater())
     try:
         summary_text = await asyncio.to_thread(
-            stream_openrouter_summary_sync,
+            stream_yandex_completion,
             prompt,
             chunks.put,
         )
@@ -135,19 +178,26 @@ async def _run_streaming_summary(msg: types.Message, limit: int, custom_task: st
 
         final_text = f"Краткий пересказ последних {limit} сообщений:\n\n{summary_text or full_text}"
         final_chunks = _split_text_chunks(final_text)
-        if final_chunks[0] != last_sent:
+        if use_drafts:
+            for chunk in final_chunks:
+                await msg.bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk,
+                    message_thread_id=thread_id,
+                )
+        else:
             await _safe_edit_text(progress, final_chunks[0])
-        for extra in final_chunks[1:]:
-            await msg.answer(extra)
+            for chunk in final_chunks[1:]:
+                await msg.answer(chunk)
     except RuntimeError as exc:
         done = True
         await updater_task
-        await _safe_edit_text(progress, f"Не удалось сделать пересказ: {exc}")
+        await report_error(f"Не удалось сделать пересказ: {exc}")
     except Exception:
         done = True
         await updater_task
         logger.error("summary handler internal error", exc_info=True)
-        await _safe_edit_text(progress, "Не удалось сделать пересказ из-за внутренней ошибки.")
+        await report_error("Не удалось сделать пересказ из-за внутренней ошибки.")
 
 
 def _require_admin(msg: types.Message) -> bool:
