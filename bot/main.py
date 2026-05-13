@@ -13,9 +13,9 @@ async def main():
     bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
     dp = Dispatcher()
     dp.include_router(stats_router)
+    dp.include_router(digest_router)
     dp.include_router(message_router)
     dp.include_router(reaction_router)
-    dp.include_router(digest_router)
 
     scheduler = start_scheduler(bot)
     logger.info("Bot started")
