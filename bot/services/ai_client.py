@@ -27,6 +27,8 @@ OPENCODE_BASE_URL = _env(
 MAX_OUTPUT_TOKENS = int(_env("AI_MAX_OUTPUT_TOKENS", "YANDEX_MAX_OUTPUT_TOKENS", "OPENROUTER_MAX_OUTPUT_TOKENS", default="16000"))
 AI_MAX_RETRIES = max(1, int(_env("AI_MAX_RETRIES", "YANDEX_MAX_RETRIES", default="2")))
 AI_RETRY_DELAY_SEC = float(_env("AI_RETRY_DELAY_SEC", "YANDEX_RETRY_DELAY_SEC", default="1.5"))
+AI_CALL_TIMEOUT_SEC = float(_env("AI_CALL_TIMEOUT_SEC", default="300"))
+AI_STREAM_TIMEOUT_SEC = float(_env("AI_STREAM_TIMEOUT_SEC", default="300"))
 
 OPENCODE_PREFIX = "opencode-go/"
 
@@ -134,7 +136,7 @@ def call_yandex(user_prompt: str, model: str, system_prompt: str | None = None) 
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=30) as resp:
+            with request.urlopen(req, timeout=AI_CALL_TIMEOUT_SEC) as resp:
                 raw = resp.read().decode("utf-8")
                 body = json.loads(raw)
             text = _extract_message_content(body).strip()
@@ -210,7 +212,7 @@ def call_opencode(user_prompt: str, model: str, system_prompt: str | None = None
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=60) as resp:
+            with request.urlopen(req, timeout=AI_CALL_TIMEOUT_SEC) as resp:
                 raw = resp.read().decode("utf-8")
                 body = json.loads(raw)
             text = _extract_message_content(body).strip()
@@ -269,7 +271,7 @@ def stream_opencode(
         saw_done = False
         hard_error = False
         try:
-            with request.urlopen(req, timeout=120) as resp:
+            with request.urlopen(req, timeout=AI_STREAM_TIMEOUT_SEC) as resp:
                 for raw_line in resp:
                     line = raw_line.decode("utf-8", errors="ignore").strip()
                     if not line.startswith("data:"):
@@ -380,7 +382,7 @@ def stream_yandex(
         saw_done = False
         hard_error = False
         try:
-            with request.urlopen(req, timeout=60) as resp:
+            with request.urlopen(req, timeout=AI_STREAM_TIMEOUT_SEC) as resp:
                 for raw_line in resp:
                     line = raw_line.decode("utf-8", errors="ignore").strip()
                     if not line.startswith("data:"):
