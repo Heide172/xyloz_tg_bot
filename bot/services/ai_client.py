@@ -218,8 +218,32 @@ def call_opencode(user_prompt: str, model: str, system_prompt: str | None = None
             text = _extract_message_content(body).strip()
             if text:
                 return text
-            logger.error("OpenCode empty content. model=%s raw=%s", model_id, raw[:2000])
-            raise RuntimeError(f"OpenCode API вернул пустой ответ для {model_id}")
+            # Пустой content — диагностируем.
+            finish_reason = ""
+            reasoning_len = 0
+            err_msg = ""
+            if isinstance(body, dict):
+                choices = body.get("choices") or []
+                if choices and isinstance(choices[0], dict):
+                    finish_reason = str(choices[0].get("finish_reason") or "")
+                    msg = choices[0].get("message") or {}
+                    if isinstance(msg, dict):
+                        rc = msg.get("reasoning_content") or msg.get("reasoning") or ""
+                        if isinstance(rc, str):
+                            reasoning_len = len(rc)
+                err_msg = str(body.get("error") or body.get("message") or "")
+            logger.error(
+                "OpenCode empty content. model=%s payload_chars=%d finish_reason=%s reasoning_chars=%d err=%s raw=%s",
+                model_id, len(json.dumps(payload)), finish_reason, reasoning_len, err_msg[:200], raw[:2000],
+            )
+            hint = ""
+            if finish_reason:
+                hint += f" (finish_reason={finish_reason})"
+            if reasoning_len:
+                hint += f" (reasoning_chars={reasoning_len} — модель ушла в reasoning, подними AI_MAX_OUTPUT_TOKENS или смени модель)"
+            if err_msg:
+                hint += f" (api_msg={err_msg[:200]})"
+            raise RuntimeError(f"OpenCode API вернул пустой ответ для {model_id}{hint}")
         except error.HTTPError as exc:
             details = exc.read().decode("utf-8", errors="ignore")
             last_error = f"{model_id}: {exc.code} {details[:200]}"

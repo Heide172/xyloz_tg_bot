@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import case, func
+from sqlalchemy import func
 
 from common.db.db import SessionLocal
 from common.models.message import Message
@@ -13,7 +13,6 @@ MAX_DAYS = 90
 DEFAULT_DAYS = 7
 TOXIC_THRESHOLD = 0.5
 TOP_LIMIT = 5
-_BLOCKS = "▁▂▃▄▅▆▇█"
 
 
 @dataclass
@@ -54,23 +53,6 @@ def _author_label(user: User | None) -> str:
     return "Unknown"
 
 
-def _sparkline(values: list[int]) -> str:
-    if not values:
-        return "—"
-    lo = min(values)
-    hi = max(values)
-    if hi == lo:
-        idx = len(_BLOCKS) // 2
-        return _BLOCKS[idx] * len(values)
-    span = hi - lo
-    chars = []
-    for v in values:
-        rel = (v - lo) / span
-        idx = min(len(_BLOCKS) - 1, max(0, int(rel * (len(_BLOCKS) - 1))))
-        chars.append(_BLOCKS[idx])
-    return "".join(chars)
-
-
 def _collect_counts(chat_id: int, period_start: datetime) -> MoodCounts:
     session = SessionLocal()
     try:
@@ -96,34 +78,6 @@ def _collect_counts(chat_id: int, period_start: datetime) -> MoodCounts:
             else:
                 c.unclassified = cnt
         return c
-    finally:
-        session.close()
-
-
-def _daily_net(chat_id: int, days: int) -> list[int]:
-    period_start = datetime.utcnow() - timedelta(days=days)
-    session = SessionLocal()
-    try:
-        rows = (
-            session.query(
-                func.date(Message.created_at).label("d"),
-                func.sum(case((Message.sentiment_label == "positive", 1), else_=0)).label("p"),
-                func.sum(case((Message.sentiment_label == "negative", 1), else_=0)).label("n"),
-            )
-            .filter(
-                Message.chat_id == chat_id,
-                Message.created_at >= period_start,
-            )
-            .group_by("d")
-            .order_by("d")
-            .all()
-        )
-        by_day = {r[0]: int((r[1] or 0) - (r[2] or 0)) for r in rows}
-        out: list[int] = []
-        for i in range(days):
-            day = (datetime.utcnow() - timedelta(days=days - 1 - i)).date()
-            out.append(by_day.get(day, 0))
-        return out
     finally:
         session.close()
 
@@ -155,7 +109,6 @@ def build_mood_report(chat_id: int, days: int) -> str:
     if counts.total == 0:
         return f"За последние {days} дн. нет классифицированных сообщений."
 
-    sparkline = _sparkline(_daily_net(chat_id, days))
     top_pos = _top_authors_by_sentiment(chat_id, period_start, "positive")
     top_neg = _top_authors_by_sentiment(chat_id, period_start, "negative")
 
@@ -170,8 +123,6 @@ def build_mood_report(chat_id: int, days: int) -> str:
         f"Положительные: {pos}",
         f"Нейтральные: {neu}",
         f"Отрицательные: {neg}",
-        "",
-        f"Динамика по дням (pos − neg): {sparkline}",
         "",
         "Топ позитивных авторов:",
     ]

@@ -1,61 +1,49 @@
-from aiogram import Router, F
-from aiogram.filters import Command
-from aiogram.types import Message as TgMessage
-from datetime import datetime, timedelta
-from sqlalchemy import func, and_
-from sqlalchemy.orm import aliased
+"""Команды статистики чата и пользователя.
 
+Дизайн:
+- Текстовый вывод в моноспейс-блоке (HTML <pre>) — выравнивание сохраняется, мат/спецсимволы экранируются автоматически.
+- Без ASCII-графиков (для визуальной аналитики используется LLM-команды /digest, /mood, /toxic).
+- Аргумент N — число дней (1–365), по умолчанию 14.
+- --chat <id> — для админов, чужой чат.
+"""
+import html
 import re
 from collections import Counter
+from datetime import datetime, timedelta
+
+from aiogram import Router
+from aiogram.filters import Command
+from aiogram.types import Message as TgMessage
+from sqlalchemy import distinct, func
 
 from common.db.db import SessionLocal
-from common.models.user import User
-from common.models.message import Message
 from common.logger.logger import get_logger
+from common.models.message import Message
+from common.models.user import User
 
 logger = get_logger(__name__)
 router = Router()
 
 
-# -----------------------------
-# helpers: parsing args
-# -----------------------------
-def _parse_days_and_chat(text: str):
-    """
-    /mystats 14 --chat -100123
-    /mystats --chat -100123 30
-    /mystats 7
-    """
-    days = 14
+# ---------------- args ----------------
+
+
+def _parse_args(text: str, default_days: int = 14) -> tuple[int, int | None]:
+    days = default_days
     chat_id = None
-
-    parts = (text or "").split()
-    # parts[0] = command
-    tail = parts[1:]
-
-    # find --chat
-    if "--chat" in tail:
-        i = tail.index("--chat")
-        if i + 1 < len(tail):
+    parts = (text or "").split()[1:]
+    if "--chat" in parts:
+        i = parts.index("--chat")
+        if i + 1 < len(parts):
             try:
-                chat_id = int(tail[i + 1])
-            except:
-                chat_id = None
-        # remove them for days parsing
-        new_tail = []
-        skip = set([i, i + 1])
-        for idx, p in enumerate(tail):
-            if idx in skip:
-                continue
-            new_tail.append(p)
-        tail = new_tail
-
-    # parse days from remaining numeric token
-    for p in tail:
-        if re.fullmatch(r"\d{1,4}", p):
-            days = max(1, min(3650, int(p)))
+                chat_id = int(parts[i + 1])
+            except ValueError:
+                pass
+        parts = [p for j, p in enumerate(parts) if j not in (i, i + 1)]
+    for p in parts:
+        if re.fullmatch(r"\d{1,3}", p):
+            days = max(1, min(365, int(p)))
             break
-
     return days, chat_id
 
 
@@ -63,612 +51,484 @@ async def _is_admin(bot, chat_id: int, user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id, user_id)
         return member.status in ("administrator", "creator")
-    except:
+    except Exception:
         return False
 
 
-# -----------------------------
-# helpers: activity sparkline
-# -----------------------------
-_BLOCKS = "▁▂▃▄▅▆▇█"
-
-def _sparkline(values):
-    if not values:
-        return "—"
-    mx = max(values)
-    if mx <= 0:
-        return "—"
-    res = []
-    for v in values:
-        idx = int(round((v / mx) * (len(_BLOCKS) - 1)))
-        idx = max(0, min(len(_BLOCKS) - 1, idx))
-        res.append(_BLOCKS[idx])
-    return "".join(res)
+async def _check_chat_access(message: TgMessage, forced_chat_id: int | None) -> bool:
+    if forced_chat_id is None or forced_chat_id == message.chat.id:
+        return True
+    if await _is_admin(message.bot, message.chat.id, message.from_user.id):
+        return True
+    await message.answer("⛔️ Только для админов.")
+    return False
 
 
-# -----------------------------
-# helpers: text analysis
-# -----------------------------
-_RU_STOPWORDS = {
-    # местоимения / союзы / предлоги / частицы / “мусор”
-    "я","ты","он","она","оно","мы","вы","они","меня","тебя","его","ее","её","нас","вас","их",
-    "мне","тебе","ему","ей","нам","вам","им","мой","твой","наш","ваш","свой","сам","сама","сами",
-    "это","этот","эта","эти","тот","та","те","там","тут","здесь","куда","откуда","где","когда","почему","зачем","как",
-    "и","а","но","или","либо","да","нет","же","бы","б","вот","ну","ок","ага",
-    "в","во","на","по","к","ко","у","о","об","от","до","из","за","для","про","при","без","над","под","между",
-    "что","чтобы","чтоб","если","то","так","тоже","также","ещё","еще","уже","все","всё","вся","всех","всем",
-    "там","тут","сюда","отсюда","сюда","тогда","сейчас","сегодня","вчера","завтра",
-    "просто","типа","короче","вообще","реально","буквально",
+def _since(days: int) -> datetime:
+    return datetime.utcnow() - timedelta(days=days)
+
+
+def _send_mono(message: TgMessage):
+    async def _send(text: str):
+        safe = html.escape(text)
+        await message.answer(f"<pre>{safe}</pre>", parse_mode="HTML")
+    return _send
+
+
+# ---------------- text helpers ----------------
+
+
+_WORD_RE = re.compile(r"[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\-]{3,}")
+_STOPWORDS = {
+    "что", "как", "это", "так", "там", "тут", "ещё", "его", "ему", "она", "они",
+    "вот", "уже", "тоже", "просто", "только", "если", "когда", "потом", "очень",
+    "блин", "типа", "короче", "вообще", "ладно", "кстати", "значит", "наверное",
+    "хочу", "хочет", "хотел", "знаю", "знает", "знал",
+    "думаю", "думает", "думал", "делаю", "делает", "делал",
+    "сказал", "сказала", "сказали", "говорит", "говорил",
+    "вчера", "сегодня", "завтра", "всегда", "никогда",
+    "from", "with", "this", "that", "what", "they", "them", "have", "were", "just", "like",
 }
 
-_WORD_RE = re.compile(r"[a-zа-яё0-9']+", re.IGNORECASE)
 
-def _top_words(texts, limit=5):
-    c = Counter()
+def _top_words(texts: list[str], limit: int = 5) -> list[tuple[str, int]]:
+    c: Counter[str] = Counter()
     for t in texts:
         if not t:
             continue
-        t = t.lower()
-        for w in _WORD_RE.findall(t):
-            if len(w) < 3:
-                continue
-            if w in _RU_STOPWORDS:
+        for w in _WORD_RE.findall(t.lower()):
+            if w in _STOPWORDS:
                 continue
             c[w] += 1
     return c.most_common(limit)
 
 
-# -----------------------------
-# DB stats pieces
-# -----------------------------
-def _since(days: int):
-    return datetime.utcnow() - timedelta(days=days)
+def _author_name(user: User | None) -> str:
+    if user and user.username:
+        return f"@{user.username}"
+    if user and user.fullname:
+        return user.fullname
+    return "Unknown"
 
 
-def _get_or_create_user(session, tg_user) -> User:
-    user = session.query(User).filter_by(tg_id=tg_user.id).first()
-    if not user:
-        user = User(tg_id=tg_user.id, username=tg_user.username, fullname=tg_user.full_name)
-        session.add(user)
-        session.flush()
-    return user
-
-
-def _count_replies_made(session, chat_id: int, user_db_id: int, since_dt):
-    ReplyTo = aliased(Message)
-    q = (
-        session.query(func.count(Message.id))
-        .join(
-            ReplyTo,
-            and_(
-                Message.chat_id == ReplyTo.chat_id,
-                Message.reply_to == ReplyTo.telegram_message_id,
-            )
-        )
-        .filter(
-            Message.chat_id == chat_id,
-            Message.user_id == user_db_id,
-            Message.created_at >= since_dt,
-            ReplyTo.user_id != user_db_id,
-        )
-    )
-    return q.scalar() or 0
-
-
-def _count_replies_received(session, chat_id: int, user_db_id: int, since_dt):
-    Answer = aliased(Message)
-    Original = aliased(Message)
-    q = (
-        session.query(func.count(Answer.id))
-        .join(
-            Original,
-            and_(
-                Answer.chat_id == Original.chat_id,
-                Answer.reply_to == Original.telegram_message_id,
-            )
-        )
-        .filter(
-            Answer.chat_id == chat_id,
-            Answer.created_at >= since_dt,
-            Original.user_id == user_db_id,
-            Answer.user_id != user_db_id,
-        )
-    )
-    return q.scalar() or 0
-
-
-def _activity_by_day(session, chat_id: int, user_db_id: int, since_dt, days: int):
-    # Postgres: date_trunc('day', created_at)
-    rows = (
-        session.query(func.date_trunc("day", Message.created_at).label("d"), func.count(Message.id))
-        .filter(
-            Message.chat_id == chat_id,
-            Message.user_id == user_db_id,
-            Message.created_at >= since_dt,
-        )
-        .group_by("d")
-        .order_by("d")
-        .all()
-    )
-    m = {r[0].date(): int(r[1]) for r in rows}
-
-    # full series day-by-day
-    start = (datetime.utcnow() - timedelta(days=days-1)).date()
-    series = []
-    labels = []
-    for i in range(days):
-        d = start + timedelta(days=i)
-        labels.append(d)
-        series.append(m.get(d, 0))
-    return labels, series
-
-
-def _peak_hour(session, chat_id: int, user_db_id: int, since_dt):
-    # extract hour (0-23)
-    rows = (
-        session.query(func.extract("hour", Message.created_at).label("h"), func.count(Message.id))
-        .filter(
-            Message.chat_id == chat_id,
-            Message.user_id == user_db_id,
-            Message.created_at >= since_dt,
-        )
-        .group_by("h")
-        .order_by(func.count(Message.id).desc())
-        .limit(1)
-        .all()
-    )
-    if not rows:
-        return None
-    return int(rows[0][0])
-
-def _chat_peak_hour(session, chat_id: int, since_dt):
-    rows = (
-        session.query(func.extract("hour", Message.created_at).label("h"), func.count(Message.id))
-        .filter(Message.chat_id == chat_id, Message.created_at >= since_dt)
-        .group_by("h")
-        .order_by(func.count(Message.id).desc())
-        .limit(1)
-        .all()
-    )
-    if not rows:
-        return None
-    return int(rows[0][0])
-
-
-def _chat_busiest_day(session, chat_id: int, since_dt):
-    rows = (
-        session.query(func.date_trunc("day", Message.created_at).label("d"), func.count(Message.id).label("c"))
-        .filter(Message.chat_id == chat_id, Message.created_at >= since_dt)
-        .group_by("d")
-        .order_by(func.count(Message.id).desc())
-        .limit(1)
-        .all()
-    )
-    if not rows:
-        return None, 0
-    return rows[0][0].date(), int(rows[0][1])
-
-
-def _reply_edges(session, chat_id: int, since_dt, limit: int = 30):
-    """
-    Граф связей: Answer.user_id -> Original.user_id, вес = кол-во reply.
-    """
-    Answer = aliased(Message)
-    Original = aliased(Message)
-
-    rows = (
-        session.query(
-            Answer.user_id.label("src"),
-            Original.user_id.label("dst"),
-            func.count(Answer.id).label("c"),
-        )
-        .join(
-            Original,
-            and_(
-                Answer.chat_id == Original.chat_id,
-                Answer.reply_to == Original.telegram_message_id,
-            )
-        )
-        .filter(
-            Answer.chat_id == chat_id,
-            Answer.created_at >= since_dt,
-            Answer.user_id.isnot(None),
-            Original.user_id.isnot(None),
-            Answer.user_id != Original.user_id,
-        )
-        .group_by(Answer.user_id, Original.user_id)
-        .order_by(func.count(Answer.id).desc())
-        .limit(limit)
-        .all()
-    )
-    return [(int(r[0]), int(r[1]), int(r[2])) for r in rows]
-
-
-def _reply_in_out(session, chat_id: int, since_dt):
-    """
-    out: сколько reply написал пользователь (кому угодно)
-    in: сколько reply получили сообщения пользователя (от кого угодно)
-    """
-    Answer = aliased(Message)
-    Original = aliased(Message)
-
-    out_rows = (
-        session.query(Answer.user_id, func.count(Answer.id).label("c"))
-        .join(
-            Original,
-            and_(
-                Answer.chat_id == Original.chat_id,
-                Answer.reply_to == Original.telegram_message_id,
-            )
-        )
-        .filter(
-            Answer.chat_id == chat_id,
-            Answer.created_at >= since_dt,
-            Answer.user_id.isnot(None),
-            Original.user_id.isnot(None),
-            Answer.user_id != Original.user_id,
-        )
-        .group_by(Answer.user_id)
-        .order_by(func.count(Answer.id).desc())
-        .all()
-    )
-
-    in_rows = (
-        session.query(Original.user_id, func.count(Answer.id).label("c"))
-        .join(
-            Answer,
-            and_(
-                Answer.chat_id == Original.chat_id,
-                Answer.reply_to == Original.telegram_message_id,
-            )
-        )
-        .filter(
-            Answer.chat_id == chat_id,
-            Answer.created_at >= since_dt,
-            Answer.user_id.isnot(None),
-            Original.user_id.isnot(None),
-            Answer.user_id != Original.user_id,
-        )
-        .group_by(Original.user_id)
-        .order_by(func.count(Answer.id).desc())
-        .all()
-    )
-
-    out_map = {int(uid): int(c) for uid, c in out_rows}
-    in_map = {int(uid): int(c) for uid, c in in_rows}
-    return out_map, in_map
-
-
-def _names_map(session, user_ids):
+def _names_map(session, user_ids: list[int]) -> dict[int, str]:
     if not user_ids:
         return {}
-    users = session.query(User).filter(User.id.in_(list(set(user_ids)))).all()
-    return {u.id: (u.fullname or u.username or str(u.tg_id)) for u in users}
+    rows = session.query(User).filter(User.id.in_(user_ids)).all()
+    return {u.id: _author_name(u) for u in rows}
 
-def _calc_user_stats_text(session, chat_id: int, user: User, days: int) -> str:
-    since_dt = _since(days)
 
-    msgs_q = (
-        session.query(Message)
-        .filter(
-            Message.chat_id == chat_id,
-            Message.user_id == user.id,
-            Message.created_at >= since_dt,
-        )
-        .order_by(Message.created_at.desc())
+def _peak_hour(session, chat_id: int, since: datetime, user_db_id: int | None = None) -> int | None:
+    q = session.query(
+        func.extract("hour", Message.created_at).label("h"),
+        func.count(Message.id),
+    ).filter(
+        Message.chat_id == chat_id,
+        Message.created_at >= since,
     )
-
-    msg_count = msgs_q.count()
-
-    texts = [t[0] for t in session.query(Message.text).filter(
-        Message.chat_id == chat_id,
-        Message.user_id == user.id,
-        Message.created_at >= since_dt,
-        Message.text.isnot(None)
-    ).all()]
-
-    char_count = sum(len(t) for t in texts)
-    word_count = sum(len(_WORD_RE.findall((t or "").lower())) for t in texts)
-    avg_len = int(round(char_count / msg_count)) if msg_count else 0
-
-    active_days = session.query(func.count(func.distinct(func.date_trunc("day", Message.created_at)))).filter(
-        Message.chat_id == chat_id,
-        Message.user_id == user.id,
-        Message.created_at >= since_dt,
-    ).scalar() or 0
-
-    peak_hour = _peak_hour(session, chat_id, user.id, since_dt)
-
-    labels, series = _activity_by_day(session, chat_id, user.id, since_dt, days)
-    spark = _sparkline(series)
-    top = _top_words(texts, limit=5)
-
-    replies_made = _count_replies_made(session, chat_id, user.id, since_dt)
-    replies_received = _count_replies_received(session, chat_id, user.id, since_dt)
-
-    # “любимое слово”
-    fav_word = top[0][0] if top else "—"
-    fav_word_cnt = top[0][1] if top else 0
-
-    top_words_str = "—" if not top else ", ".join([f"{w}×{c}" for w, c in top])
-
-    name = user.fullname or user.username or str(user.tg_id)
-
-    lines = []
-    lines.append(f"📊 Статистика за {days} дн. по чату `{chat_id}`")
-    lines.append(f"👤 {name}")
-    lines.append("")
-    lines.append(f"💬 Сообщений: {msg_count}")
-    lines.append(f"🗓 Активных дней: {active_days}")
-    lines.append(f"⌨️ Символов: {char_count} · слов: {word_count} · ср. длина: {avg_len}")
-    if peak_hour is not None:
-        lines.append(f"🕒 Пиковый час: ~{peak_hour:02d}:00")
-    lines.append("")
-    lines.append(f"📈 Активность по дням: {spark}")
-    lines.append("")
-    lines.append(f"🧠 Любимое слово: **{fav_word}** (×{fav_word_cnt})")
-    lines.append(f"🔤 Топ слов: {top_words_str}")
-    lines.append("")
-    lines.append(f"↩️ Ответил другим: {replies_made}")
-    lines.append(f"💬 Ответили ему: {replies_received}")
-
-    return "\n".join(lines)
-
-def _calc_chat_stats_text(session, chat_id: int, days: int) -> str:
-    since_dt = _since(days)
-
-    total_msgs = session.query(func.count(Message.id)).filter(
-        Message.chat_id == chat_id,
-        Message.created_at >= since_dt,
-    ).scalar() or 0
-
-    active_users = session.query(func.count(func.distinct(Message.user_id))).filter(
-        Message.chat_id == chat_id,
-        Message.created_at >= since_dt,
-    ).scalar() or 0
-
-    active_days = session.query(func.count(func.distinct(func.date_trunc("day", Message.created_at)))).filter(
-        Message.chat_id == chat_id,
-        Message.created_at >= since_dt,
-    ).scalar() or 0
-
-    # reply rate
-    reply_msgs = session.query(func.count(Message.id)).filter(
-        Message.chat_id == chat_id,
-        Message.created_at >= since_dt,
-        Message.reply_to.isnot(None),
-    ).scalar() or 0
-    reply_rate = (reply_msgs / total_msgs * 100.0) if total_msgs else 0.0
-
-    # топ пользователей по сообщениям
-    top_rows = (
-        session.query(Message.user_id, func.count(Message.id).label("c"))
-        .filter(Message.chat_id == chat_id, Message.created_at >= since_dt)
-        .group_by(Message.user_id)
-        .order_by(func.count(Message.id).desc())
-        .limit(10)
-        .all()
-    )
-    user_ids_top = [r[0] for r in top_rows]
-    umap = _names_map(session, user_ids_top)
-
-    top_lines = []
-    for i, (uid, c) in enumerate(top_rows, start=1):
-        top_lines.append(f"{i}. {umap.get(uid, str(uid))} — {c}")
-
-    # общая активность по дням
-    rows = (
-        session.query(func.date_trunc("day", Message.created_at).label("d"), func.count(Message.id))
-        .filter(Message.chat_id == chat_id, Message.created_at >= since_dt)
-        .group_by("d")
-        .order_by("d")
-        .all()
-    )
-    m = {r[0].date(): int(r[1]) for r in rows}
-    start = (datetime.utcnow() - timedelta(days=days-1)).date()
-    series = [m.get(start + timedelta(days=i), 0) for i in range(days)]
-    spark = _sparkline(series)
-
-    # кто кому отвечает (граф)
-    edges = _reply_edges(session, chat_id, since_dt, limit=10)
-    edge_ids = []
-    for a, b, _ in edges:
-        edge_ids.extend([a, b])
-    nmap = _names_map(session, edge_ids)
-
-    edges_lines = []
-    for i, (a, b, c) in enumerate(edges, start=1):
-        edges_lines.append(f"{i}. {nmap.get(a, a)} → {nmap.get(b, b)} — {c}")
-
-    out_map, in_map = _reply_in_out(session, chat_id, since_dt)
-    # топ 5 кто больше отвечает
-    top_out = sorted(out_map.items(), key=lambda x: x[1], reverse=True)[:5]
-    top_in = sorted(in_map.items(), key=lambda x: x[1], reverse=True)[:5]
-    out_names = _names_map(session, [u for u, _ in top_out])
-    in_names = _names_map(session, [u for u, _ in top_in])
-
-    top_out_lines = [f"{i}. {out_names.get(u, u)} — {c}" for i, (u, c) in enumerate(top_out, 1)]
-    top_in_lines = [f"{i}. {in_names.get(u, u)} — {c}" for i, (u, c) in enumerate(top_in, 1)]
-
-    # пиковые показатели
-    peak_hour = _chat_peak_hour(session, chat_id, since_dt)
-    busy_day, busy_cnt = _chat_busiest_day(session, chat_id, since_dt)
-
-    # топ слов по чату
-    texts = [t[0] for t in session.query(Message.text).filter(
-        Message.chat_id == chat_id,
-        Message.created_at >= since_dt,
-        Message.text.isnot(None)
-    ).all()]
-    top_words = _top_words(texts, limit=7)
-    top_words_str = "—" if not top_words else ", ".join([f"{w}×{c}" for w, c in top_words])
-
-    lines = []
-    lines.append(f"📊 Статистика чата `{chat_id}` за {days} дн.")
-    lines.append("")
-    lines.append(f"💬 Сообщений: {total_msgs}")
-    lines.append(f"👥 Активных пользователей: {active_users}")
-    lines.append(f"🗓 Активных дней: {active_days}")
-    lines.append(f"↩️ Сообщений-ответов: {reply_msgs} ({reply_rate:.1f}%)")
-    if peak_hour is not None:
-        lines.append(f"🕒 Пиковый час чата: ~{peak_hour:02d}:00")
-    if busy_day is not None:
-        lines.append(f"🔥 Самый активный день: {busy_day.isoformat()} — {busy_cnt}")
-    lines.append("")
-    lines.append(f"📈 Активность по дням: {spark}")
-    lines.append("")
-    lines.append("🏆 Топ по сообщениям:")
-    lines.append("\n".join(top_lines) if top_lines else "—")
-    lines.append("")
-    lines.append("🧠 Топ слов по чату:")
-    lines.append(top_words_str)
-    lines.append("")
-    lines.append("💬 Кто больше всех отвечает (reply-out):")
-    lines.append("\n".join(top_out_lines) if top_out_lines else "—")
-    lines.append("")
-    lines.append("🎯 Кому чаще всего отвечают (reply-in):")
-    lines.append("\n".join(top_in_lines) if top_in_lines else "—")
-    lines.append("")
-    lines.append("🕸 Топ связей A → B:")
-    lines.append("\n".join(edges_lines) if edges_lines else "—")
-
-    return "\n".join(lines)
+    if user_db_id is not None:
+        q = q.filter(Message.user_id == user_db_id)
+    row = q.group_by("h").order_by(func.count(Message.id).desc()).limit(1).first()
+    return int(row[0]) if row else None
 
 
+# ---------------- /mystats ----------------
 
-# -----------------------------
-# commands
-# -----------------------------
+
 @router.message(Command("mystats"))
 async def cmd_mystats(message: TgMessage):
+    send = _send_mono(message)
     session = SessionLocal()
     try:
-        days, forced_chat_id = _parse_days_and_chat(message.text or "")
-        chat_id = forced_chat_id or message.chat.id
+        days, forced_chat = _parse_args(message.text or "")
+        if not await _check_chat_access(message, forced_chat):
+            return
+        chat_id = forced_chat or message.chat.id
+        tg_user = message.from_user
 
-        # запрет “смотреть другой чат” не-админам
-        if forced_chat_id is not None and forced_chat_id != message.chat.id:
-            is_admin = await _is_admin(message.bot, message.chat.id, message.from_user.id)
-            if not is_admin:
-                await message.answer("⛔️ Смотреть статистику другого чата можно только админам текущего чата.")
-                return
+        user = session.query(User).filter(User.tg_id == tg_user.id).first()
+        if not user:
+            user = User(tg_id=tg_user.id, username=tg_user.username, fullname=tg_user.full_name)
+            session.add(user)
+            session.commit()
+            session.refresh(user)
 
-        user = _get_or_create_user(session, message.from_user)
+        since = _since(days)
 
-        text = _calc_user_stats_text(session, chat_id=chat_id, user=user, days=days)
-        await message.answer(text, parse_mode="Markdown")
+        msg_count = session.query(func.count(Message.id)).filter(
+            Message.chat_id == chat_id, Message.user_id == user.id, Message.created_at >= since,
+        ).scalar() or 0
 
-    except Exception as e:
-        logger.error(f"mystats error: {e}", exc_info=True)
-        await message.answer("⚠️ Ошибка при расчёте статистики. Смотри логи.")
+        if msg_count == 0:
+            await send(f"📊 {_author_name(user)} · {days} дн.\n\nНет сообщений за период.")
+            return
+
+        total_chat = session.query(func.count(Message.id)).filter(
+            Message.chat_id == chat_id, Message.created_at >= since,
+        ).scalar() or 1
+
+        active_days = session.query(func.count(distinct(func.date_trunc("day", Message.created_at)))).filter(
+            Message.chat_id == chat_id, Message.user_id == user.id, Message.created_at >= since,
+        ).scalar() or 0
+
+        avg_len_raw = session.query(func.avg(func.length(Message.text))).filter(
+            Message.chat_id == chat_id, Message.user_id == user.id, Message.created_at >= since,
+            Message.text.isnot(None), Message.text != "",
+        ).scalar()
+        avg_len = int(avg_len_raw or 0)
+
+        replies_made = session.query(func.count(Message.id)).filter(
+            Message.chat_id == chat_id, Message.user_id == user.id,
+            Message.created_at >= since, Message.reply_to.isnot(None),
+        ).scalar() or 0
+
+        # Сколько раз ответили на сообщения этого пользователя.
+        my_tg_ids = session.query(Message.message_id).filter(
+            Message.chat_id == chat_id, Message.user_id == user.id,
+        ).subquery()
+        replies_received = session.query(func.count(Message.id)).filter(
+            Message.chat_id == chat_id,
+            Message.created_at >= since,
+            Message.reply_to.in_(my_tg_ids),
+        ).scalar() or 0
+
+        # Место в чате.
+        ranks = (
+            session.query(Message.user_id, func.count(Message.id).label("c"))
+            .filter(Message.chat_id == chat_id, Message.created_at >= since)
+            .group_by(Message.user_id)
+            .order_by(func.count(Message.id).desc())
+            .all()
+        )
+        rank = next((i + 1 for i, (uid, _) in enumerate(ranks) if uid == user.id), None)
+
+        peak = _peak_hour(session, chat_id, since, user.id)
+        peak_str = f"~{peak:02d}:00" if peak is not None else "—"
+
+        texts = [t[0] for t in session.query(Message.text).filter(
+            Message.chat_id == chat_id, Message.user_id == user.id, Message.created_at >= since,
+            Message.text.isnot(None),
+        ).all()]
+        top = _top_words(texts, limit=1)
+        fav = f"«{top[0][0]}» (×{top[0][1]})" if top else "—"
+
+        share = msg_count / total_chat * 100
+        rank_str = f"место #{rank}" if rank else "—"
+
+        lines = [
+            f"📊 {_author_name(user)} · {days} дн.",
+            "",
+            f"💬 {msg_count} сообщ. ({share:.1f}% чата, {rank_str})",
+            f"⌨️ ср. длина {avg_len} · 🕒 пик {peak_str} · 🗓 {active_days} акт. дн.",
+            f"↩️ написал {replies_made} ответов · получил {replies_received}",
+            f"🔤 любимое слово: {fav}",
+        ]
+        await send("\n".join(lines))
+    except Exception as exc:
+        logger.exception("mystats failed")
+        await message.answer(f"⚠️ Ошибка: {exc}")
     finally:
         session.close()
+
+
+# ---------------- /chatstats ----------------
 
 
 @router.message(Command("chatstats"))
 async def cmd_chatstats(message: TgMessage):
+    send = _send_mono(message)
     session = SessionLocal()
     try:
-        days, forced_chat_id = _parse_days_and_chat(message.text or "")
-        chat_id = forced_chat_id or message.chat.id
+        days, forced_chat = _parse_args(message.text or "")
+        if not await _check_chat_access(message, forced_chat):
+            return
+        chat_id = forced_chat or message.chat.id
+        since = _since(days)
 
-        # chatstats по умолчанию — текущий чат; на другой чат тоже только админам
-        if forced_chat_id is not None and forced_chat_id != message.chat.id:
-            is_admin = await _is_admin(message.bot, message.chat.id, message.from_user.id)
-            if not is_admin:
-                await message.answer("⛔️ Смотреть статистику другого чата можно только админам текущего чата.")
-                return
+        total = session.query(func.count(Message.id)).filter(
+            Message.chat_id == chat_id, Message.created_at >= since,
+        ).scalar() or 0
 
-        text = _calc_chat_stats_text(session, chat_id=chat_id, days=days)
-        await message.answer(text, parse_mode="Markdown")
-
-    except Exception as e:
-        logger.error(f"chatstats error: {e}", exc_info=True)
-        await message.answer("⚠️ Ошибка при расчёте статистики. Смотри логи.")
-    finally:
-        session.close()
-
-@router.message(Command("chatgraph"))
-async def cmd_chatgraph(message: TgMessage):
-    session = SessionLocal()
-    try:
-        days, forced_chat_id = _parse_days_and_chat(message.text or "")
-        chat_id = forced_chat_id or message.chat.id
-
-        # смотреть другой чат — только админам текущего чата
-        if forced_chat_id is not None and forced_chat_id != message.chat.id:
-            is_admin = await _is_admin(message.bot, message.chat.id, message.from_user.id)
-            if not is_admin:
-                await message.answer("⛔️ Смотреть статистику другого чата можно только админам текущего чата.")
-                return
-
-        since_dt = _since(days)
-        edges = _reply_edges(session, chat_id, since_dt, limit=30)
-        if not edges:
-            await message.answer("🕸 Граф связей пуст: нет reply (или оригиналы сообщений не залогированы).")
+        if total == 0:
+            await send(f"📊 Чат · {days} дн.\n\nНет сообщений за период.")
             return
 
-        ids = []
-        for a, b, _ in edges:
-            ids.extend([a, b])
-        nmap = _names_map(session, ids)
+        active_users = session.query(func.count(distinct(Message.user_id))).filter(
+            Message.chat_id == chat_id, Message.created_at >= since,
+        ).scalar() or 0
 
-        # для каждого автора покажем его топ-цель
-        best_to = {}
-        for a, b, c in edges:
-            if a not in best_to or c > best_to[a][1]:
-                best_to[a] = (b, c)
+        replies = session.query(func.count(Message.id)).filter(
+            Message.chat_id == chat_id, Message.created_at >= since,
+            Message.reply_to.isnot(None),
+        ).scalar() or 0
+        reply_rate = replies / total * 100
 
-        lines = []
-        lines.append(f"🕸 Граф связей (reply) за {days} дн. · чат `{chat_id}`")
+        # Самый активный день.
+        busy_row = (
+            session.query(func.date_trunc("day", Message.created_at).label("d"), func.count(Message.id).label("c"))
+            .filter(Message.chat_id == chat_id, Message.created_at >= since)
+            .group_by("d").order_by(func.count(Message.id).desc()).limit(1).first()
+        )
+        busy_str = f"{busy_row[0].strftime('%d %b').lower()} ({int(busy_row[1])})" if busy_row else "—"
+
+        # Топ-5 авторов.
+        top_rows = (
+            session.query(Message.user_id, func.count(Message.id).label("c"))
+            .filter(Message.chat_id == chat_id, Message.created_at >= since)
+            .group_by(Message.user_id)
+            .order_by(func.count(Message.id).desc())
+            .limit(5).all()
+        )
+        names = _names_map(session, [r[0] for r in top_rows])
+        max_name_len = max((len(names.get(uid, str(uid))) for uid, _ in top_rows), default=0)
+
+        # Топ слов.
+        texts = [t[0] for t in session.query(Message.text).filter(
+            Message.chat_id == chat_id, Message.created_at >= since, Message.text.isnot(None),
+        ).all()]
+        top_words = _top_words(texts, limit=8)
+        words_str = ", ".join(f"{w}×{c}" for w, c in top_words) if top_words else "—"
+
+        lines = [
+            f"📊 Чат · {days} дн.",
+            "",
+            f"💬 {total} сообщ. · 👥 {active_users} активных · 🔥 {busy_str}",
+            f"↩️ {reply_rate:.0f}% сообщений — ответы",
+            "",
+            "🏆 Топ авторов",
+        ]
+        for i, (uid, cnt) in enumerate(top_rows, 1):
+            share = cnt / total * 100
+            name = names.get(uid, str(uid))
+            lines.append(f"  {i}. {name:<{max_name_len}}  {cnt:>5}  ({share:.0f}%)")
         lines.append("")
-        lines.append("🏆 Топ рёбер (A → B):")
-        for i, (a, b, c) in enumerate(edges[:15], start=1):
-            lines.append(f"{i}. {nmap.get(a, a)} → {nmap.get(b, b)} — {c}")
+        lines.append(f"🔤 Топ слов: {words_str}")
 
-        lines.append("")
-        lines.append("🎯 Для каждого автора: кому он отвечает чаще всего:")
-        items = sorted(best_to.items(), key=lambda x: x[1][1], reverse=True)[:15]
-        for i, (a, (b, c)) in enumerate(items, start=1):
-            lines.append(f"{i}. {nmap.get(a, a)} → {nmap.get(b, b)} — {c}")
-
-        await message.answer("\n".join(lines), parse_mode="Markdown")
-
-    except Exception as e:
-        logger.error(f"chatgraph error: {e}", exc_info=True)
-        await message.answer("⚠️ Ошибка при построении графа. Смотри логи.")
+        await send("\n".join(lines))
+    except Exception as exc:
+        logger.exception("chatstats failed")
+        await message.answer(f"⚠️ Ошибка: {exc}")
     finally:
         session.close()
+
+
+# ---------------- /who ----------------
+
+
+@router.message(Command("who"))
+async def cmd_who(message: TgMessage):
+    send = _send_mono(message)
+    session = SessionLocal()
+    try:
+        days, forced_chat = _parse_args(message.text or "")
+        if not await _check_chat_access(message, forced_chat):
+            return
+        chat_id = forced_chat or message.chat.id
+        since = _since(days)
+
+        rows = (
+            session.query(Message.user_id, func.count(Message.id).label("c"))
+            .filter(Message.chat_id == chat_id, Message.created_at >= since)
+            .group_by(Message.user_id)
+            .order_by(func.count(Message.id).desc())
+            .all()
+        )
+        if not rows:
+            await send(f"👥 Активные за {days} дн.\n\nНикого нет.")
+            return
+
+        user_ids = [r[0] for r in rows]
+        names = _names_map(session, user_ids)
+
+        # Пиковый час каждому.
+        peak_rows = session.query(
+            Message.user_id,
+            func.extract("hour", Message.created_at).label("h"),
+            func.count(Message.id).label("c"),
+        ).filter(
+            Message.chat_id == chat_id, Message.created_at >= since,
+        ).group_by(Message.user_id, "h").all()
+        peak_by_user: dict[int, tuple[int, int]] = {}
+        for uid, h, c in peak_rows:
+            cur = peak_by_user.get(uid)
+            if cur is None or c > cur[1]:
+                peak_by_user[uid] = (int(h), int(c))
+
+        # Топ-слово каждому.
+        texts_by_user: dict[int, list[str]] = {}
+        text_rows = session.query(Message.user_id, Message.text).filter(
+            Message.chat_id == chat_id, Message.created_at >= since,
+            Message.text.isnot(None), Message.text != "",
+        ).all()
+        for uid, t in text_rows:
+            texts_by_user.setdefault(uid, []).append(t)
+
+        max_name_len = max((len(names.get(uid, str(uid))) for uid in user_ids), default=10)
+        max_count_len = max((len(str(c)) for _, c in rows), default=4)
+
+        lines = [f"👥 Активные за {days} дн.", ""]
+        for i, (uid, cnt) in enumerate(rows, 1):
+            name = names.get(uid, str(uid))
+            peak = peak_by_user.get(uid)
+            peak_str = f"~{peak[0]:02d}:00" if peak else "—   "
+            top = _top_words(texts_by_user.get(uid, []), limit=1)
+            fav = f"«{top[0][0]}»" if top else "—"
+            lines.append(f"{i:>2}. {name:<{max_name_len}}  {cnt:>{max_count_len}}  пик {peak_str}  {fav}")
+
+        await send("\n".join(lines))
+    except Exception as exc:
+        logger.exception("who failed")
+        await message.answer(f"⚠️ Ошибка: {exc}")
+    finally:
+        session.close()
+
+
+# ---------------- /peakday ----------------
+
+
+@router.message(Command("peakday"))
+async def cmd_peakday(message: TgMessage):
+    send = _send_mono(message)
+    session = SessionLocal()
+    try:
+        days, forced_chat = _parse_args(message.text or "")
+        if not await _check_chat_access(message, forced_chat):
+            return
+        chat_id = forced_chat or message.chat.id
+        since = _since(days)
+
+        rows = (
+            session.query(func.date_trunc("day", Message.created_at).label("d"), func.count(Message.id).label("c"))
+            .filter(Message.chat_id == chat_id, Message.created_at >= since)
+            .group_by("d").order_by(func.count(Message.id).desc())
+            .limit(3).all()
+        )
+        if not rows:
+            await send(f"🔥 Пиковые дни за {days} дн.\n\nНет данных.")
+            return
+
+        lines = [f"🔥 Пиковые дни за {days} дн.", ""]
+        for i, (day_dt, cnt) in enumerate(rows, 1):
+            day_start = day_dt
+            day_end = day_dt + timedelta(days=1)
+            texts = [t[0] for t in session.query(Message.text).filter(
+                Message.chat_id == chat_id,
+                Message.created_at >= day_start,
+                Message.created_at < day_end,
+                Message.text.isnot(None),
+            ).all()]
+            top = _top_words(texts, limit=5)
+            words = ", ".join(w for w, _ in top) if top else "—"
+            lines.append(f"{i}. {day_start.strftime('%d %b').lower()} — {int(cnt)} сообщ.")
+            lines.append(f"   топ слов: {words}")
+
+        await send("\n".join(lines))
+    except Exception as exc:
+        logger.exception("peakday failed")
+        await message.answer(f"⚠️ Ошибка: {exc}")
+    finally:
+        session.close()
+
+
+# ---------------- /streak ----------------
+
+
+@router.message(Command("streak"))
+async def cmd_streak(message: TgMessage):
+    send = _send_mono(message)
+    session = SessionLocal()
+    try:
+        days, forced_chat = _parse_args(message.text or "")
+        if not await _check_chat_access(message, forced_chat):
+            return
+        chat_id = forced_chat or message.chat.id
+        since = _since(days)
+
+        rows = session.query(
+            Message.user_id,
+            func.date(Message.created_at).label("d"),
+        ).filter(
+            Message.chat_id == chat_id, Message.created_at >= since,
+        ).group_by(Message.user_id, "d").all()
+
+        by_user: dict[int, set] = {}
+        for uid, d in rows:
+            by_user.setdefault(uid, set()).add(d)
+
+        if not by_user:
+            await send(f"🔥 Стрики активности за {days} дн.\n\nНет данных.")
+            return
+
+        results: list[tuple[int, int, object]] = []  # (user_id, max_streak, last_day_of_streak)
+        for uid, dates in by_user.items():
+            sorted_dates = sorted(dates)
+            max_s = cur = 1
+            cur_end = sorted_dates[0]
+            best_end = cur_end
+            for prev, cur_d in zip(sorted_dates, sorted_dates[1:]):
+                if (cur_d - prev).days == 1:
+                    cur += 1
+                    cur_end = cur_d
+                    if cur > max_s:
+                        max_s = cur
+                        best_end = cur_end
+                else:
+                    cur = 1
+                    cur_end = cur_d
+            results.append((uid, max_s, best_end))
+
+        results.sort(key=lambda x: -x[1])
+        names = _names_map(session, [r[0] for r in results])
+
+        max_name_len = max((len(names.get(uid, str(uid))) for uid, _, _ in results), default=10)
+
+        lines = [f"🔥 Стрики активности за {days} дн.", ""]
+        for i, (uid, streak, last_day) in enumerate(results[:15], 1):
+            name = names.get(uid, str(uid))
+            lines.append(f"{i:>2}. {name:<{max_name_len}}  {streak} дн.  (последний: {last_day.strftime('%d %b').lower()})")
+
+        await send("\n".join(lines))
+    except Exception as exc:
+        logger.exception("streak failed")
+        await message.answer(f"⚠️ Ошибка: {exc}")
+    finally:
+        session.close()
+
+
+# ---------------- /help ----------------
+
+
+HELP_TEXT = """🤖 Команды бота
+
+📊 Статистика
+  /mystats [N]       твоя стата за N дней (по умолч. 14)
+  /chatstats [N]     стата чата
+  /who [N]           список активных, по строке на человека
+  /peakday [N]       топ-3 самых активных дня
+  /streak [N]        стрики активности подряд
+
+🧠 AI и пересказы
+  /summary [N]              пересказ N последних сообщений
+  /summary_custom N | фокус кастомный пересказ
+  /digest [N]               дайджест чата (с детекцией всплесков)
+  /digest 7 --debug         debug-промпт без LLM-вызова
+  /card [@user]             карточка участника
+  /mood [N]                 настроение чата
+  /toxic [N]                токсичность чата
+
+🎲 Игровое
+  /fag    случайный участник дня
+
+⚙️ Админ
+  /prompt_show, /prompt_set, /prompt_reset
+  /model_show, /model_list, /model_set
+
+Аргументы:
+  N — число дней (1–365, по умолч. 14)
+  --chat <id> — другой чат (только для админов)"""
+
 
 @router.message(Command("help"))
 async def cmd_help(message: TgMessage):
-    text = (
-        "📊 *Помощь по статистике*\n\n"
-
-        "👤 *Личная статистика*\n"
-        "`/mystats` — твоя статистика в текущем чате\n"
-        "`/mystats 30` — за последние 30 дней\n"
-        "`/mystats 14 --chat -100123` — по другому чату (только для админов)\n\n"
-
-        "💬 *Статистика чата*\n"
-        "`/chatstats` — общая статистика текущего чата\n"
-        "`/chatstats 30` — за 30 дней\n"
-        "`/chatstats --chat -100123` — другой чат (только для админов)\n\n"
-
-        "🕸 *Граф общения*\n"
-        "`/chatgraph` — кто кому отвечает\n"
-        "`/chatgraph 30` — за 30 дней\n\n"
-
-        "⚙️ *Примечания*\n"
-        "• Статистика строится только по сообщениям, которые видел бот\n"
-        "• Ответы считаются по reply-сообщениям\n"
-        "• Просмотр других чатов доступен только администраторам\n"
-        "• Период по умолчанию — 14 дней\n\n"
-
-        "ℹ️ Пример:\n"
-        "`/mystats 7`\n"
-        "`/chatstats 30`\n"
-        "`/chatgraph`\n"
-    )
-
-    await message.answer(text, parse_mode="Markdown")
+    safe = html.escape(HELP_TEXT)
+    await message.answer(f"<pre>{safe}</pre>", parse_mode="HTML")
