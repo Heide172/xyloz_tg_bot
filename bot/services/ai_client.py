@@ -1,8 +1,11 @@
 import json
+import logging
 import os
 import time
 from typing import Callable
 from urllib import error, request
+
+logger = logging.getLogger(__name__)
 
 
 def _env(*names: str, default: str = "") -> str:
@@ -102,11 +105,32 @@ def call_yandex(user_prompt: str, model: str, system_prompt: str | None = None) 
         )
         try:
             with request.urlopen(req, timeout=30) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
+                raw = resp.read().decode("utf-8")
+                body = json.loads(raw)
             text = _extract_message_content(body).strip()
             if text:
                 return text
-            raise RuntimeError("Некорректный ответ Yandex API")
+            # Пустой content — логируем тело, чтобы понять что вернул сервер.
+            logger.error(
+                "Yandex returned empty content. model=%s payload_chars=%d raw_response=%s",
+                model_uri,
+                len(json.dumps(payload)),
+                raw[:2000],
+            )
+            # Попробуем извлечь подсказку из тела
+            finish_reason = ""
+            err_msg = ""
+            if isinstance(body, dict):
+                choices = body.get("choices") or []
+                if choices and isinstance(choices[0], dict):
+                    finish_reason = str(choices[0].get("finish_reason") or "")
+                err_msg = str(body.get("error") or body.get("message") or "")
+            hint = ""
+            if finish_reason:
+                hint = f" (finish_reason={finish_reason})"
+            if err_msg:
+                hint += f" (api_msg={err_msg[:200]})"
+            raise RuntimeError(f"Yandex API вернул пустой ответ{hint}")
         except error.HTTPError as exc:
             details = exc.read().decode("utf-8", errors="ignore")
             last_error = f"{model_uri}: {exc.code} {details[:200]}"
