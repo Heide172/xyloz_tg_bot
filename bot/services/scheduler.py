@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from common.logger.logger import get_logger
 from services.digest_service import (
@@ -10,6 +11,7 @@ from services.digest_service import (
     generate_digest,
     has_data_for_period,
 )
+from services.nlp_classifier import classify_pending_once
 
 logger = get_logger(__name__)
 
@@ -58,6 +60,14 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         coalesce=True,
         max_instances=1,
     )
+    scheduler.add_job(
+        classify_pending_once,
+        trigger=IntervalTrigger(seconds=30),
+        id="nlp_classify_pending",
+        coalesce=True,
+        max_instances=1,
+        next_run_time=None,
+    )
     scheduler.start()
-    logger.info("scheduler started: weekly digest at Mon 09:00 MSK")
+    logger.info("scheduler started: weekly digest at Mon 09:00 MSK, nlp classify every 30s")
     return scheduler

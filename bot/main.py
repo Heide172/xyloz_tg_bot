@@ -3,8 +3,10 @@ import os
 from aiogram import Bot, Dispatcher
 from handlers.digest import router as digest_router
 from handlers.messages import router as message_router
+from handlers.mood import router as mood_router
 from handlers.reactions import router as reaction_router
 from handlers.statistic import router as stats_router
+from handlers.user_card import router as user_card_router
 from services.scheduler import start_scheduler
 from common.logger.logger import get_logger
 logger = get_logger(__name__)
@@ -14,6 +16,8 @@ async def main():
     dp = Dispatcher()
     dp.include_router(stats_router)
     dp.include_router(digest_router)
+    dp.include_router(user_card_router)
+    dp.include_router(mood_router)
     dp.include_router(message_router)
     dp.include_router(reaction_router)
 

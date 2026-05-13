@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BIGINT, String, Text, DateTime, ForeignKey, Boolean, Index
+from sqlalchemy import Column, BIGINT, Integer, Float, String, Text, DateTime, ForeignKey, Boolean, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from common.db.base import Base
@@ -42,6 +42,13 @@ class Message(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     edited_at = Column(DateTime)
 
+    # NLP-метрики (заполняются worker'ом)
+    sentiment_score = Column(Float)   # -1.0..1.0
+    sentiment_label = Column(String(20))  # 'positive' | 'neutral' | 'negative'
+    toxicity_score = Column(Float)    # 0.0..1.0
+    topic_id = Column(Integer)
+    nlp_processed_at = Column(DateTime)
+
     # Отношения
     user = relationship("User", back_populates="messages")
     reactions = relationship("Reaction", back_populates="message")
@@ -52,4 +59,6 @@ class Message(Base):
         Index('idx_chat_message', 'chat_id', 'message_id'),
         Index('idx_user_chat', 'user_id', 'chat_id'),
         Index('idx_created_at', 'created_at'),
+        Index('idx_nlp_unprocessed', 'nlp_processed_at'),
+        Index('idx_chat_sentiment', 'chat_id', 'sentiment_label'),
     )
