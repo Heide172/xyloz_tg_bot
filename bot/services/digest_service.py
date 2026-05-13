@@ -625,13 +625,25 @@ def _format_summary_header(data: DigestData) -> str:
     return "\n".join(lines)
 
 
-async def generate_digest(chat_id: int, days: int = DIGEST_DEFAULT_DAYS) -> str:
+async def build_digest_payload(chat_id: int, days: int = DIGEST_DEFAULT_DAYS) -> tuple[str, str, DigestData | None]:
+    """Возвращает (header_for_user, prompt_for_llm, data) без вызова LLM.
+
+    Если данных нет — header содержит сообщение об этом, prompt пустой, data=None.
+    """
     messages, period_start, period_end = await asyncio.to_thread(_fetch_period_messages, chat_id, days)
     if not messages:
-        return f"За последние {days} дн. нет текстовых сообщений для дайджеста."
+        return f"За последние {days} дн. нет текстовых сообщений для дайджеста.", "", None
 
     data = await asyncio.to_thread(_build_digest_data, messages, period_start, period_end, days)
     prompt = _build_prompt(data)
+    header = _format_summary_header(data)
+    return header, prompt, data
+
+
+async def generate_digest(chat_id: int, days: int = DIGEST_DEFAULT_DAYS) -> str:
+    header, prompt, data = await build_digest_payload(chat_id, days)
+    if data is None:
+        return header
 
     digest_text = await asyncio.to_thread(
         ai_client.call_yandex,
@@ -639,6 +651,4 @@ async def generate_digest(chat_id: int, days: int = DIGEST_DEFAULT_DAYS) -> str:
         get_summary_model(),
         prompts.load("digest_system"),
     )
-
-    header = _format_summary_header(data)
     return f"{header}\n\n{digest_text}"

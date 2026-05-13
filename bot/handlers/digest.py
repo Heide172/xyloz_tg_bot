@@ -1,10 +1,14 @@
+from datetime import datetime
+
 from aiogram import Router, types
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
+from aiogram.types import BufferedInputFile
 
 from common.logger.logger import get_logger
 from services.digest_service import (
     DIGEST_DEFAULT_DAYS,
+    build_digest_payload,
     generate_digest,
     parse_digest_days,
 )
@@ -40,12 +44,53 @@ async def _safe_edit(message: types.Message, text: str):
         raise
 
 
+def _parse_args(text: str | None) -> tuple[int, bool]:
+    """Возвращает (days, debug). Поддерживает /digest [N] [--debug] в любом порядке."""
+    parts = (text or "").split()
+    debug = False
+    cleaned: list[str] = []
+    for p in parts:
+        if p == "--debug":
+            debug = True
+        else:
+            cleaned.append(p)
+    # парсим как обычный /digest [N]
+    fake_text = " ".join(cleaned) if len(cleaned) > 1 else "/digest"
+    days = parse_digest_days(fake_text, default=DIGEST_DEFAULT_DAYS)
+    return days, debug
+
+
 @router.message(Command("digest"))
 async def cmd_digest(msg: types.Message):
     try:
-        days = parse_digest_days(msg.text or "/digest", default=DIGEST_DEFAULT_DAYS)
+        days, debug = _parse_args(msg.text)
     except ValueError as exc:
         await msg.answer(str(exc))
+        return
+
+    if debug:
+        progress = await msg.answer(f"Собираю debug-промпт за {days} дн...")
+        try:
+            header, prompt, data = await build_digest_payload(chat_id=msg.chat.id, days=days)
+        except Exception as exc:
+            logger.exception("digest debug build failed for chat %s", msg.chat.id)
+            await _safe_edit(progress, f"Не удалось собрать debug: {exc}")
+            return
+
+        if data is None:
+            await _safe_edit(progress, header)
+            return
+
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        filename = f"digest_debug_{ts}.txt"
+        file_bytes = prompt.encode("utf-8")
+        await _safe_edit(progress, header)
+        await msg.bot.send_document(
+            chat_id=msg.chat.id,
+            document=BufferedInputFile(file_bytes, filename=filename),
+            caption=f"debug-промпт ({len(file_bytes)} байт, ~{len(file_bytes)//4} токенов)",
+            message_thread_id=msg.message_thread_id,
+        )
         return
 
     progress = await msg.answer(f"Собираю дайджест за {days} дн...")
