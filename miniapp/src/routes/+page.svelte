@@ -20,6 +20,7 @@
 
   const tiles = [
     { href: '/markets', title: 'Рынки', desc: 'Открытые ставки' },
+    { href: '/games', title: 'Игры', desc: 'Blackjack, slots, дайс, рулетка' },
     { href: '/portfolio', title: 'Портфолио', desc: 'Мои ставки' },
     { href: '/leaderboard', title: 'Топ', desc: 'Лидерборд чата' },
     { href: '/rules', title: 'Правила', desc: 'Как это работает' }

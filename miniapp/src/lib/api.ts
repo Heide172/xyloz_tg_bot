@@ -1,6 +1,7 @@
 import { getChatId, getInitData } from './tg';
 import type {
   BalanceResponse,
+  GameResult,
   LeaderboardEntry,
   Market,
   MeResponse,
@@ -66,5 +67,37 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ url })
     }),
-  portfolio: () => request<{ items: PortfolioBet[] }>('/portfolio')
+  portfolio: () => request<{ items: PortfolioBet[] }>('/portfolio'),
+
+  coinflip: (bet: number, pick: 'heads' | 'tails') =>
+    request<GameResult>('/games/coinflip', {
+      method: 'POST',
+      body: JSON.stringify({ bet, pick })
+    }),
+  dice: (bet: number, mode: 'over' | 'under', threshold: number) =>
+    request<GameResult>('/games/dice', {
+      method: 'POST',
+      body: JSON.stringify({ bet, mode, threshold })
+    }),
+  slots: (bet: number) =>
+    request<GameResult>('/games/slots', {
+      method: 'POST',
+      body: JSON.stringify({ bet })
+    }),
+  roulette: (bet: number, bet_type: string, value: string | null) =>
+    request<GameResult>('/games/roulette', {
+      method: 'POST',
+      body: JSON.stringify({ bet, bet_type, value })
+    }),
+  blackjackStart: (bet: number) =>
+    request<GameResult>('/games/blackjack/start', {
+      method: 'POST',
+      body: JSON.stringify({ bet })
+    }),
+  blackjackHit: (gameId: number) =>
+    request<GameResult>(`/games/blackjack/${gameId}/hit`, { method: 'POST' }),
+  blackjackStand: (gameId: number) =>
+    request<GameResult>(`/games/blackjack/${gameId}/stand`, { method: 'POST' }),
+  blackjackDouble: (gameId: number) =>
+    request<GameResult>(`/games/blackjack/${gameId}/double`, { method: 'POST' })
 };

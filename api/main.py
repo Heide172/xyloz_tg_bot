@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "bot"))
 
 from api.routes import economy as economy_routes
+from api.routes import games as games_routes
 from api.routes import markets as markets_routes
 from api.routes import portfolio as portfolio_routes
 
@@ -50,3 +51,4 @@ def health() -> dict:
 app.include_router(economy_routes.router, prefix="/api/v1", tags=["economy"])
 app.include_router(markets_routes.router, prefix="/api/v1/markets", tags=["markets"])
 app.include_router(portfolio_routes.router, prefix="/api/v1/portfolio", tags=["portfolio"])
+app.include_router(games_routes.router, prefix="/api/v1/games", tags=["games"])

@@ -65,3 +65,15 @@ export interface TxItem {
   note: string | null;
   created_at: string;
 }
+
+export interface GameResult {
+  game_id: number;
+  game: string;
+  outcome: 'win' | 'lose' | 'push' | 'blackjack' | 'active' | string;
+  bet: number;
+  payout: number;
+  net: number;
+  user_balance_after: number;
+  bank_after: number;
+  details: Record<string, any>;
+}

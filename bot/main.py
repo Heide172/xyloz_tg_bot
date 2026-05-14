@@ -48,7 +48,7 @@ PUBLIC_COMMANDS = [
     BotCommand(command="bet", description="Поставить на рынок"),
     BotCommand(command="portfolio", description="Мои ставки"),
     BotCommand(command="market_import", description="Импорт рынка из polymarket/manifold"),
-    BotCommand(command="casino", description="Открыть Mini App: ставки и баланс"),
+    BotCommand(command="casino", description="Открыть Mini App: ставки, игры, рынки, баланс"),
     BotCommand(command="rules", description="Правила Бурмалды: экономика и ставки"),
 ]
 
