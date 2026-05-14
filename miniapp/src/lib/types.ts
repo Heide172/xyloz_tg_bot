@@ -67,6 +67,23 @@ export interface TxItem {
   created_at: string;
 }
 
+export interface FarmState {
+  cp_balance: number;
+  tap_level: number;
+  auto_level: number;
+  auto_rate_cps: number;
+  next_tap_cost: number;
+  next_auto_cost: number;
+  daily_converted: number;
+  daily_cap: number;
+  daily_remaining: number;
+  bank_balance: number;
+  user_balance: number;
+  lifetime_cp: number;
+  cp_per_hryvnia: number;
+  offline_cap_seconds: number;
+}
+
 export interface GameResult {
   game_id: number;
   game: string;

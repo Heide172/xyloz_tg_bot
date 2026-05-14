@@ -1,6 +1,7 @@
 import { getChatId, getInitData } from './tg';
 import type {
   BalanceResponse,
+  FarmState,
   GameResult,
   LeaderboardEntry,
   Market,
@@ -128,5 +129,20 @@ export const api = {
       body: JSON.stringify({ winning_option_position })
     }),
   adminMarketCancel: (id: number) =>
-    request<Record<string, any>>(`/admin/markets/${id}/cancel`, { method: 'POST' })
+    request<Record<string, any>>(`/admin/markets/${id}/cancel`, { method: 'POST' }),
+
+  // ---------- clicker farm ----------
+  farmState: () => request<FarmState>('/farm'),
+  farmTap: (count: number, elapsedMs: number) =>
+    request<FarmState>('/farm/tap', {
+      method: 'POST',
+      body: JSON.stringify({ count, elapsed_ms: elapsedMs })
+    }),
+  farmUpgradeTap: () => request<FarmState>('/farm/upgrade/tap', { method: 'POST' }),
+  farmUpgradeAuto: () => request<FarmState>('/farm/upgrade/auto', { method: 'POST' }),
+  farmConvert: (hryvniaAmount: number) =>
+    request<FarmState>('/farm/convert', {
+      method: 'POST',
+      body: JSON.stringify({ hryvnia_amount: hryvniaAmount })
+    })
 };

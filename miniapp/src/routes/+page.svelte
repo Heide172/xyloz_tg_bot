@@ -19,6 +19,7 @@
   });
 
   const baseTiles = [
+    { href: '/farm', title: 'Ферма', desc: 'Тапай, копи cp, выводи в гривны' },
     { href: '/markets', title: 'Рынки', desc: 'Открытые ставки' },
     { href: '/games', title: 'Игры', desc: 'Blackjack, slots, дайс, рулетка' },
     { href: '/portfolio', title: 'Портфолио', desc: 'Мои ставки' },
