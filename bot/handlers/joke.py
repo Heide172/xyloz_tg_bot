@@ -12,7 +12,7 @@ from services.phrase_service import get_phrase_of_day
 router = Router()
 logger = get_logger(__name__)
 
-TIMEOUT_SEC = 60
+TIMEOUT_SEC = 300
 
 
 async def _tick(progress: types.Message, label: str) -> None:
