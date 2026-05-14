@@ -18,13 +18,16 @@
     }
   });
 
-  const tiles = [
+  const baseTiles = [
     { href: '/markets', title: 'Рынки', desc: 'Открытые ставки' },
     { href: '/games', title: 'Игры', desc: 'Blackjack, slots, дайс, рулетка' },
     { href: '/portfolio', title: 'Портфолио', desc: 'Мои ставки' },
     { href: '/leaderboard', title: 'Топ', desc: 'Лидерборд чата' },
     { href: '/rules', title: 'Правила', desc: 'Как это работает' }
   ];
+  $: tiles = me?.is_admin
+    ? [...baseTiles, { href: '/admin', title: 'Админка', desc: 'Управление' }]
+    : baseTiles;
 
   function displayName(m: MeResponse): string {
     if (m.user.username) return '@' + m.user.username;

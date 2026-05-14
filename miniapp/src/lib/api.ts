@@ -99,5 +99,34 @@ export const api = {
   blackjackStand: (gameId: number) =>
     request<GameResult>(`/games/blackjack/${gameId}/stand`, { method: 'POST' }),
   blackjackDouble: (gameId: number) =>
-    request<GameResult>(`/games/blackjack/${gameId}/double`, { method: 'POST' })
+    request<GameResult>(`/games/blackjack/${gameId}/double`, { method: 'POST' }),
+
+  // ---------- admin ----------
+  adminBalanceAdjust: (target: string, amount: number, note: string | null) =>
+    request<{ user_id: number; username: string | null; new_balance: number }>(
+      '/admin/balance_adjust',
+      { method: 'POST', body: JSON.stringify({ target, amount, note }) }
+    ),
+  adminBankAdjust: (amount: number, note: string | null) =>
+    request<{ new_balance: number }>('/admin/bank_adjust', {
+      method: 'POST',
+      body: JSON.stringify({ amount, note })
+    }),
+  adminMarketCreate: (body: { question: string; options: string[]; duration: string }) =>
+    request<{ market_id: number; fee_charged: number; options: { id: number; label: string }[] }>(
+      '/admin/markets/create',
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+  adminMarketImport: (url: string) =>
+    request<{ market_id: number; already_imported: boolean; [k: string]: any }>(
+      '/admin/markets/import',
+      { method: 'POST', body: JSON.stringify({ url }) }
+    ),
+  adminMarketResolve: (id: number, winning_option_position: number) =>
+    request<Record<string, any>>(`/admin/markets/${id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ winning_option_position })
+    }),
+  adminMarketCancel: (id: number) =>
+    request<Record<string, any>>(`/admin/markets/${id}/cancel`, { method: 'POST' })
 };

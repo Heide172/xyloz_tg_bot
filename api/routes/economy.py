@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query
 from api.auth import (
     TgWebAppAuth,
     ensure_db_user,
+    is_admin,
     is_chat_member,
     require_auth,
     require_chat_membership,
@@ -33,8 +34,9 @@ async def me(auth: TgWebAppAuth = Depends(require_auth)) -> MeResponse:
         u = session.query(User).filter(User.id == user_id).first()
     finally:
         session.close()
+    admin_flag = is_admin(auth.user.id)
     if u is None:
-        return MeResponse(user=UserPublic(id=0, tg_id=auth.user.id))
+        return MeResponse(user=UserPublic(id=0, tg_id=auth.user.id), is_admin=admin_flag)
     balance = None
     # Без жёсткого 403: если не участник, просто не показываем баланс.
     if auth.chat_id is not None and await is_chat_member(auth.chat_id, auth.user.id):
@@ -42,7 +44,7 @@ async def me(auth: TgWebAppAuth = Depends(require_auth)) -> MeResponse:
         balance = BalanceResponse(
             chat_id=auth.chat_id, balance=bal, bank=get_chat_bank(auth.chat_id)
         )
-    return MeResponse(user=user_to_schema(u), balance=balance)
+    return MeResponse(user=user_to_schema(u), balance=balance, is_admin=admin_flag)
 
 
 @router.get("/balance", response_model=BalanceResponse)

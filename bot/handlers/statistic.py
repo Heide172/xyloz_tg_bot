@@ -554,29 +554,15 @@ HELP_TEXT = """Команды бота
   /joke      анекдот дня
   /phrase    фраза дня в стиле чата
 
-[Экономика]
-  /balance              твой баланс гривен (стартовый бонус 1000)
-  /leaderboard          топ балансов чата
-  /economy              общая экономика чата (банк, supply)
-  /transfer @user N     перевод гривен
+[Казино и ставки — всё через Mini App]
+  /casino    открыть Mini App: баланс, рынки, портфолио, мини-игры, админка
+  /rules     правила Бурмалды
 
-[Ставки]
-  /casino                               открыть Mini App (UI для всего ниже)
-  /market_create q | opt1 | opt2 | 7d   создать рынок (комиссия 100)
-  /markets [open|closed|resolved|all]   список рынков
-  /market <id>                          карточка рынка
-  /bet <id> <opt> <amount>              поставить
-  /portfolio                            мои ставки
-  /market_import <url>                  импорт из polymarket/manifold (комиссия 50)
-
-[Админ]
+[Технический админ]
   /prompt_show, /prompt_set, /prompt_reset
   /model_show, /model_list, /model_set
-  /admin_status                    полное состояние бота
-  /backfill list|start|stop        управление backfill
-  /admin_adjust @user ±N [note]    ручная корректировка баланса
-  /market_resolve <id> <winner_idx> закрыть рынок и выплатить
-  /market_cancel <id>              отменить рынок с возвратом всех ставок
+  /admin_status                полное состояние бота
+  /backfill list|start|stop    управление backfill
 
 Аргументы:
   N — число дней (1–365, по умолч. 14)

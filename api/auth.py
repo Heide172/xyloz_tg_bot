@@ -173,3 +173,27 @@ async def require_chat_membership(auth: TgWebAppAuth) -> int:
     if not ok:
         raise HTTPException(status_code=403, detail="Ты не состоишь в этом чате.")
     return chat_id
+
+
+# ---------------- admin ----------------
+
+
+def is_admin(tg_id: int) -> bool:
+    raw = os.getenv("BOT_ADMIN_IDS", "")
+    for part in raw.split(","):
+        v = part.strip()
+        if not v:
+            continue
+        try:
+            if int(v) == tg_id:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+async def require_admin(auth: TgWebAppAuth = None) -> TgWebAppAuth:
+    """Зависимость: пропускает только bot-админов."""
+    if auth is None or not is_admin(auth.user.id):
+        raise HTTPException(status_code=403, detail="Только для админов бота.")
+    return auth

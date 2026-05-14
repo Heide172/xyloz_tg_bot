@@ -21,6 +21,7 @@ class BalanceResponse(BaseModel):
 class MeResponse(BaseModel):
     user: UserPublic
     balance: Optional[BalanceResponse] = None
+    is_admin: bool = False
 
 
 class TxItem(BaseModel):

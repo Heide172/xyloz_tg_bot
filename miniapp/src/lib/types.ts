@@ -14,6 +14,7 @@ export interface BalanceResponse {
 export interface MeResponse {
   user: UserPublic;
   balance: BalanceResponse | null;
+  is_admin?: boolean;
 }
 
 export interface MarketOption {
