@@ -39,7 +39,11 @@ logger = get_logger(__name__)
 EXTERNAL_CHECK_TIMEOUT_SEC = float(os.getenv("EXTERNAL_MARKETS_HTTP_TIMEOUT", "30"))
 EXTERNAL_IMPORT_FEE = int(os.getenv("MARKET_IMPORT_FEE", "50"))  # дешевле обычного create
 
-POLYMARKET_RE = re.compile(r"polymarket\.com/(?:event|market)/([\w-]+)")
+# Polymarket URL форматы:
+#   polymarket.com/market/<slug>                       — одиночный
+#   polymarket.com/event/<event-slug>                  — event-категория (отвергаем)
+#   polymarket.com/event/<event-slug>/<market-slug>    — под-рынок внутри event'а
+POLYMARKET_RE = re.compile(r"polymarket\.com/(?:event|market)/([\w-]+)(?:/([\w-]+))?")
 MANIFOLD_RE = re.compile(r"manifold\.markets/[\w_.\-]+/([\w-]+)")
 
 
@@ -60,7 +64,8 @@ def parse_url(url: str) -> tuple[str, str] | None:
         return None
     m = POLYMARKET_RE.search(url)
     if m:
-        return ("polymarket", m.group(1))
+        # Если есть второй slug — это под-рынок внутри event'а, его используем.
+        return ("polymarket", m.group(2) or m.group(1))
     m = MANIFOLD_RE.search(url)
     if m:
         return ("manifold", m.group(1))
