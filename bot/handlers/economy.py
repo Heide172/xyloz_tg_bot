@@ -61,7 +61,7 @@ async def cmd_balance(msg: types.Message):
         return
     user = _ensure_db_user(msg.from_user)
     bal = get_balance(user.id, msg.chat.id, auto_start=True)
-    await _send_mono(msg, f"{_author_name(user)}: {bal} коинов")
+    await _send_mono(msg, f"{_author_name(user)}: {bal} гривен")
 
 
 # ---------------- /leaderboard ----------------
@@ -76,7 +76,7 @@ async def cmd_leaderboard(msg: types.Message):
     max_name = max((len(_author_name(u)) for u, _ in rows), default=10)
     lines = [f"Лидерборд чата (top {len(rows)})", ""]
     for i, (u, b) in enumerate(rows, 1):
-        lines.append(f"{i:>2}. {_author_name(u):<{max_name}}  {b:>8} коинов")
+        lines.append(f"{i:>2}. {_author_name(u):<{max_name}}  {b:>8} гривен")
     await _send_mono(msg, "\n".join(lines))
 
 
@@ -167,7 +167,7 @@ async def cmd_transfer(msg: types.Message):
 
     await _send_mono(
         msg,
-        f"{_author_name(sender)} → {_author_name(target_user)}: {amount} коинов\n"
+        f"{_author_name(sender)} → {_author_name(target_user)}: {amount} гривен\n"
         f"Баланс {_author_name(sender)}:        {from_bal}\n"
         f"Баланс {_author_name(target_user)}:   {to_bal}",
     )

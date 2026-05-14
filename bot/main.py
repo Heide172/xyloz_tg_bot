@@ -10,6 +10,7 @@ from handlers.economy import router as economy_router
 from handlers.joke import router as joke_router
 from handlers.markets import router as markets_router
 from handlers.messages import router as message_router
+from handlers.rules import router as rules_router
 from handlers.mood import router as mood_router
 from handlers.reactions import router as reaction_router
 from handlers.statistic import router as stats_router
@@ -37,10 +38,10 @@ PUBLIC_COMMANDS = [
     BotCommand(command="fag", description="Случайный участник дня"),
     BotCommand(command="joke", description="Анекдот дня"),
     BotCommand(command="phrase", description="Фраза дня в стиле чата"),
-    BotCommand(command="balance", description="Твой баланс коинов"),
+    BotCommand(command="balance", description="Твой баланс гривен"),
     BotCommand(command="leaderboard", description="Топ балансов чата"),
     BotCommand(command="economy", description="Экономика чата"),
-    BotCommand(command="transfer", description="Перевод коинов другому"),
+    BotCommand(command="transfer", description="Перевод гривен другому"),
     BotCommand(command="market_create", description="Создать рынок ставок"),
     BotCommand(command="markets", description="Список рынков"),
     BotCommand(command="market", description="Карточка рынка"),
@@ -48,6 +49,7 @@ PUBLIC_COMMANDS = [
     BotCommand(command="portfolio", description="Мои ставки"),
     BotCommand(command="market_import", description="Импорт рынка из polymarket/manifold"),
     BotCommand(command="casino", description="Открыть Mini App: ставки и баланс"),
+    BotCommand(command="rules", description="Правила Бурмалды: экономика и ставки"),
 ]
 
 ADMIN_COMMANDS = PUBLIC_COMMANDS + [
@@ -84,6 +86,7 @@ async def main():
     dp.include_router(economy_router)
     dp.include_router(markets_router)
     dp.include_router(casino_router)
+    dp.include_router(rules_router)
     dp.include_router(admin_status_router)
     dp.include_router(message_router)
     dp.include_router(reaction_router)

@@ -86,7 +86,7 @@ HELP_CREATE = (
     "Создание рынка:\n"
     "/market_create вопрос | опция1 | опция2 | <длительность>\n"
     "Длительность: 7d / 12h / 90m\n"
-    f"Комиссия за создание: {MARKET_CREATION_FEE} коинов (идёт в банк чата).\n"
+    f"Комиссия за создание: {MARKET_CREATION_FEE} гривен (идёт в банк чата).\n"
     "Опций — от 2 до 6."
 )
 
@@ -140,7 +140,7 @@ async def cmd_market_create(msg: types.Message):
         f"Рынок #{result.market_id} создан\n"
         f"Q: {question}\n"
         f"Опции:\n{options_str}\n"
-        f"Комиссия списана: {result.fee_charged} коинов\n"
+        f"Комиссия списана: {result.fee_charged} гривен\n"
         f"Ставить: /bet {result.market_id} <N> <сумма>",
     )
 
@@ -355,7 +355,7 @@ async def cmd_market_import(msg: types.Message):
             msg,
             "Использование: /market_import <url>\n"
             f"Поддерживаются: polymarket.com, manifold.markets\n"
-            f"Комиссия импорта: {EXTERNAL_IMPORT_FEE} коинов (в банк чата).\n"
+            f"Комиссия импорта: {EXTERNAL_IMPORT_FEE} гривен (в банк чата).\n"
             "После импорта рынок резолвится автоматически при закрытии внешнего.",
         )
         return

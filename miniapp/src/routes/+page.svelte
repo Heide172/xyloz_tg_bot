@@ -21,7 +21,8 @@
   const tiles = [
     { href: '/markets', title: 'Рынки', desc: 'Открытые ставки' },
     { href: '/portfolio', title: 'Портфолио', desc: 'Мои ставки' },
-    { href: '/leaderboard', title: 'Топ', desc: 'Лидерборд чата' }
+    { href: '/leaderboard', title: 'Топ', desc: 'Лидерборд чата' },
+    { href: '/rules', title: 'Правила', desc: 'Как это работает' }
   ];
 
   function displayName(m: MeResponse): string {
@@ -45,7 +46,7 @@
     {#if me.balance}
       <div class="big-num">
         {fmtCoins(me.balance.balance)}
-        <span class="big-suf muted">коинов</span>
+        <span class="big-suf muted">гривен</span>
       </div>
       <div class="bank-line">
         <span class="muted">Банк чата:</span>
@@ -118,9 +119,6 @@
   }
   .tile:active {
     transform: scale(0.97);
-  }
-  .tile:nth-child(3) {
-    grid-column: 1 / -1;
   }
   .tile-title {
     font-weight: 600;

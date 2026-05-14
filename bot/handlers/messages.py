@@ -368,7 +368,7 @@ async def participant_of_day_handler(msg: types.Message):
             awarded = award_fag(chat_id=msg.chat.id, user_id=winner.id, day_msk=result.day_msk)
             if awarded:
                 new_bal = get_balance(winner.id, msg.chat.id, auto_start=True)
-                bonus_line = f"\nБонус: +{awarded} коинов (баланс: {new_bal})"
+                bonus_line = f"\nБонус: +{awarded} гривен (баланс: {new_bal})"
     except Exception:
         logger.exception("fag bonus award failed")
 

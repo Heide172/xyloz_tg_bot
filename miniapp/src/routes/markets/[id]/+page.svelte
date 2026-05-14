@@ -36,7 +36,7 @@
   async function placeBet() {
     if (!market || posting) return;
     if (amount < 10) {
-      showAlert('Минимум 10 коинов');
+      showAlert('Минимум 10 гривен');
       return;
     }
     posting = true;

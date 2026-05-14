@@ -284,7 +284,7 @@ def _format_summary(chat_id: int, day_msk: date, nominations: list[Nomination], 
             "nomination_best_quote": "Лучшая цитата",
         }
         title = title_map.get(n.kind, n.kind)
-        lines.append(f"{title}: {_author_name(n.user)}  +{n.amount} коинов  ({n.metric})")
+        lines.append(f"{title}: {_author_name(n.user)}  +{n.amount} гривен  ({n.metric})")
         if n.message_text:
             lines.append(f'  «{n.message_text}»')
     if awarded_count < len(nominations):
