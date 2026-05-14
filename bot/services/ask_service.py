@@ -21,7 +21,8 @@ logger = get_logger(__name__)
 NLP_SERVICE_URL = os.getenv("NLP_SERVICE_URL", "http://nlp:8000").rstrip("/")
 EMBED_TIMEOUT_SEC = float(os.getenv("NLP_EMBED_TIMEOUT_SEC", "60"))
 
-ASK_TOP_K = int(os.getenv("ASK_TOP_K", "20"))
+ASK_TOP_K = int(os.getenv("ASK_TOP_K", "30"))
+ASK_CONTEXT_WINDOW_MIN = int(os.getenv("ASK_CONTEXT_WINDOW_MIN", "3"))
 ASK_MIN_QUERY_LEN = 3
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -82,27 +83,82 @@ def _search_similar(chat_id: int, query_vec: list[float], k: int) -> list[dict]:
                 "created_at": msg.created_at,
                 "author": _author_label(user.username if user else None, user.fullname if user else None),
                 "similarity": float(1.0 - dist),
+                "is_hit": True,
             })
         return results
     finally:
         session.close()
 
 
+def _expand_with_neighbors(chat_id: int, hits: list[dict], window_min: int) -> list[dict]:
+    """Для каждого hit'а добавляем сообщения ±window_min минут в том же чате."""
+    if not hits:
+        return hits
+    from datetime import timedelta
+
+    window = timedelta(minutes=window_min)
+    hit_ids = {h["id"] for h in hits}
+
+    session = SessionLocal()
+    try:
+        all_results: dict[int, dict] = {h["id"]: h for h in hits}
+        for hit in hits:
+            start = hit["created_at"] - window
+            end = hit["created_at"] + window
+            rows = (
+                session.query(Message, User)
+                .outerjoin(User, Message.user_id == User.id)
+                .filter(
+                    Message.chat_id == chat_id,
+                    Message.created_at >= start,
+                    Message.created_at <= end,
+                    Message.text.isnot(None),
+                    Message.text != "",
+                )
+                .order_by(Message.created_at.asc())
+                .all()
+            )
+            for msg, user in rows:
+                if msg.id in all_results:
+                    continue
+                all_results[msg.id] = {
+                    "id": msg.id,
+                    "text": (msg.text or "").strip(),
+                    "created_at": msg.created_at,
+                    "author": _author_label(
+                        user.username if user else None,
+                        user.fullname if user else None,
+                    ),
+                    "similarity": 0.0,
+                    "is_hit": False,
+                }
+        merged = sorted(all_results.values(), key=lambda r: r["created_at"])
+        return merged
+    finally:
+        session.close()
+
+
 def _format_context_for_llm(query: str, results: list[dict]) -> str:
+    hits_count = sum(1 for r in results if r.get("is_hit"))
     lines = [
         prompts.load("ask_task"),
         "",
         f"ВОПРОС ПОЛЬЗОВАТЕЛЯ: {query}",
         "",
-        f"НАЙДЕННЫЕ СООБЩЕНИЯ (отсортированы по релевантности, всего {len(results)}):",
+        f"НАЙДЕННЫЕ СООБЩЕНИЯ (релевантных по поиску: {hits_count}, плюс соседи ±{ASK_CONTEXT_WINDOW_MIN} мин по времени для контекста; всего показано: {len(results)}; отсортированы хронологически):",
     ]
     for r in results:
         ts = _to_msk(r["created_at"]).strftime("%Y-%m-%d %H:%M")
-        sim = r["similarity"]
         text = r["text"].replace("\n", " ")
         if len(text) > 300:
             text = text[:300] + "…"
-        lines.append(f"[sim={sim:.2f}] {ts} МСК {r['author']}: {text}")
+        if r.get("is_hit"):
+            marker = f"★[sim={r['similarity']:.2f}]"
+        else:
+            marker = "·"
+        lines.append(f"{marker} {ts} МСК {r['author']}: {text}")
+    lines.append("")
+    lines.append("★ — найдено по поиску; · — соседнее сообщение (контекст вокруг хита).")
     return "\n".join(lines)
 
 
@@ -120,14 +176,15 @@ async def stream_ask(
     if vec is None:
         return "Не удалось получить эмбеддинг вопроса.", "", []
 
-    results = await asyncio.to_thread(_search_similar, chat_id, vec, ASK_TOP_K)
-    if not results:
+    hits = await asyncio.to_thread(_search_similar, chat_id, vec, ASK_TOP_K)
+    if not hits:
         return (
             "🔎 По этому чату нет проэмбедженных сообщений (ещё идёт backfill?).",
             "",
             [],
         )
 
+    results = await asyncio.to_thread(_expand_with_neighbors, chat_id, hits, ASK_CONTEXT_WINDOW_MIN)
     prompt = _format_context_for_llm(query, results)
     answer = await asyncio.to_thread(
         ai_client.stream,
@@ -138,5 +195,5 @@ async def stream_ask(
         on_reasoning,
     )
 
-    header = f"🔎 Вопрос: {query}\n📚 Найдено релевантных: {len(results)}"
+    header = f"🔎 Вопрос: {query}\n📚 Найдено релевантных: {len(hits)} (+{len(results) - len(hits)} соседей по времени)"
     return header, answer, results
