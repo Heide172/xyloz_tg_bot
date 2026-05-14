@@ -2,6 +2,7 @@ import asyncio
 import os
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators, BotCommandScopeDefault
+from handlers.ask import router as ask_router
 from handlers.digest import router as digest_router
 from handlers.messages import router as message_router
 from handlers.mood import router as mood_router
@@ -22,6 +23,7 @@ PUBLIC_COMMANDS = [
     BotCommand(command="mood", description="Настроение чата"),
     BotCommand(command="toxic", description="Топ токсичных авторов"),
     BotCommand(command="topics", description="Темы чата за период"),
+    BotCommand(command="ask", description="Поиск ответа в истории чата"),
     BotCommand(command="mystats", description="Твоя статистика"),
     BotCommand(command="chatstats", description="Статистика чата"),
     BotCommand(command="who", description="Список активных участников"),
@@ -54,6 +56,7 @@ async def main():
     dp.include_router(user_card_router)
     dp.include_router(mood_router)
     dp.include_router(topics_router)
+    dp.include_router(ask_router)
     dp.include_router(message_router)
     dp.include_router(reaction_router)
 
