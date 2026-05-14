@@ -79,7 +79,6 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         id="nlp_classify_pending",
         coalesce=True,
         max_instances=1,
-        next_run_time=None,
     )
     scheduler.add_job(
         embed_pending_once,
@@ -87,7 +86,6 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         id="embed_pending",
         coalesce=True,
         max_instances=1,
-        next_run_time=None,
     )
     scheduler.add_job(
         run_daily_nominations,
