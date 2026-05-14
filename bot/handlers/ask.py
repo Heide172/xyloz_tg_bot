@@ -45,11 +45,11 @@ def _format_reasoning_preview(reasoning: str) -> str:
     tail = reasoning.replace("\n", " ").strip()
     if len(tail) > REASONING_TAIL_CHARS:
         tail = "…" + tail[-REASONING_TAIL_CHARS:]
-    return f"🧠 Думаю над вопросом…\n\n{tail}"
+    return f"Думаю над вопросом…\n\n{tail}"
 
 
 def _format_content_preview(content: str) -> str:
-    return f"📚 Формирую ответ…\n\n{content.strip()}"[:MAX_TG_TEXT + 100]
+    return f"Формирую ответ…\n\n{content.strip()}"[:MAX_TG_TEXT + 100]
 
 
 @router.message(Command("ask"))
@@ -60,7 +60,7 @@ async def cmd_ask(msg: types.Message):
         await msg.answer(str(exc))
         return
 
-    progress = await msg.answer("🔎 Ищу в истории чата…")
+    progress = await msg.answer("Ищу в истории чата…")
 
     content_q: Queue[str] = Queue()
     reasoning_q: Queue[str] = Queue()

@@ -48,7 +48,7 @@ async def cmd_topics(msg: types.Message):
         await msg.answer(str(exc))
         return
 
-    progress = await msg.answer(f"🧩 Считаю темы за {days} дн. (эмбеддинги + кластеризация)…")
+    progress = await msg.answer(f"Считаю темы за {days} дн. (эмбеддинги + кластеризация)…")
     try:
         topics = await discover_topics(chat_id=msg.chat.id, days=days)
     except Exception as exc:
@@ -66,11 +66,11 @@ async def cmd_topics(msg: types.Message):
         await _safe_edit(progress, f"За {days} дн. кластеризация не нашла осмысленных тем.")
         return
 
-    lines = [f"🧩 Темы чата за {days} дн.", ""]
+    lines = [f"Темы чата за {days} дн.", ""]
     for i, t in enumerate(topics, 1):
         lines.append(f"{i}. {t['label']} ({t['size']} сообщ.)")
         if t["authors"]:
-            lines.append(f"   🔥 {' '.join(t['authors'])}")
+            lines.append(f"   Авторы: {' '.join(t['authors'])}")
         for ex in t["examples"]:
             ex_clip = ex[:140].replace("\n", " ")
             lines.append(f"   • {ex_clip}")

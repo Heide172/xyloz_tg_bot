@@ -48,11 +48,11 @@ def _format_reasoning_preview(reasoning: str) -> str:
     tail = reasoning.replace("\n", " ").strip()
     if len(tail) > REASONING_TAIL_CHARS:
         tail = "…" + tail[-REASONING_TAIL_CHARS:]
-    return f"🧠 Собираю карточку…\n\n{tail}"
+    return f"Собираю карточку…\n\n{tail}"
 
 
 def _format_content_preview(content: str) -> str:
-    return f"🪪 Карточка участника (генерирую…)\n\n{content.strip()}"[:MAX_TG_TEXT + 100]
+    return f"Карточка участника (генерирую…)\n\n{content.strip()}"[:MAX_TG_TEXT + 100]
 
 
 @router.message(Command("card"))

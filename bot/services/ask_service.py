@@ -250,7 +250,7 @@ async def stream_ask(
     hits = _merge_hits(per_query_hits)
     if not hits:
         return (
-            "🔎 По этому чату нет проэмбедженных сообщений (ещё идёт backfill?).",
+            "По этому чату нет проэмбедженных сообщений (ещё идёт backfill?).",
             "",
             [],
         )
@@ -268,9 +268,9 @@ async def stream_ask(
 
     variants_note = ""
     if len(variants) > 1:
-        variants_note = f"\n🔁 Перефразировок: {len(variants)} (orig + {len(variants)-1})"
+        variants_note = f"\nПерефразировок: {len(variants)} (orig + {len(variants)-1})"
     header = (
-        f"🔎 Вопрос: {query}{variants_note}\n"
-        f"📚 Найдено релевантных: {len(hits)} (+{len(results) - len(hits)} соседей)"
+        f"Вопрос: {query}{variants_note}\n"
+        f"Найдено релевантных: {len(hits)} (+{len(results) - len(hits)} соседей)"
     )
     return header, answer, results

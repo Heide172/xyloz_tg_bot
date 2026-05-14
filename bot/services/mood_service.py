@@ -117,7 +117,7 @@ def build_mood_report(chat_id: int, days: int) -> str:
     neg = f"{counts.negative} ({counts.pct(counts.negative):.0f}%)"
 
     lines = [
-        f"😀 Настроение чата за {days} дн.",
+        f"Настроение чата за {days} дн.",
         "",
         f"Всего классифицировано: {counts.total}" + (f" (ещё {counts.unclassified} ждут классификации)" if counts.unclassified else ""),
         f"Положительные: {pos}",
@@ -207,7 +207,7 @@ def build_toxic_report(chat_id: int, days: int) -> str:
 
     pct = 100.0 * toxic_count / total_classified
     lines = [
-        f"☠️ Токсичность чата за {days} дн.",
+        f"Токсичность чата за {days} дн.",
         "",
         f"Сообщений с уровнем токсичности ≥ {TOXIC_THRESHOLD:.1f}: {toxic_count} из {total_classified} ({pct:.1f}%)",
         "",

@@ -241,7 +241,7 @@ async def stream_user_card(
         on_reasoning,
     )
 
-    header_lines = ["🪪 Карточка участника", "", _format_stats_header(user, stats)]
+    header_lines = ["Карточка участника", "", _format_stats_header(user, stats)]
     header = "\n".join(header_lines)
     return header, card_text
 

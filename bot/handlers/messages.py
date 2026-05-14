@@ -7,7 +7,9 @@ from aiogram.filters import Command
 from common.logger.logger import get_logger
 from services.admin_service import is_admin_tg_id
 from services.daily_pick_service import pick_participant_of_day
+from services.economy_service import get_balance
 from services.message_service import save_message
+from services.nominations_service import NOMINATION_FAG, award_fag
 from services.summary_service import (
     build_summary_prompt,
     get_available_models,
@@ -33,7 +35,7 @@ def _format_reasoning_preview(reasoning: str, tail_limit: int = 400) -> str:
     tail = reasoning.replace("\n", " ").strip()
     if len(tail) > tail_limit:
         tail = "…" + tail[-tail_limit:]
-    return f"🧠 Думаю над пересказом…\n\n{tail}"
+    return f"Думаю над пересказом…\n\n{tail}"
 
 
 async def _safe_edit_text(message: types.Message, text: str):
@@ -351,13 +353,33 @@ async def participant_of_day_handler(msg: types.Message):
         who = str(result.winner_tg_id)
 
     status = "выбран" if result.is_new else "уже выбран"
+
+    # Бонус: начисляется один раз в сутки (идемпотентно).
+    bonus_line = ""
+    try:
+        from common.db.db import SessionLocal
+        from common.models.user import User
+        session = SessionLocal()
+        try:
+            winner = session.query(User).filter(User.tg_id == result.winner_tg_id).first()
+        finally:
+            session.close()
+        if winner is not None:
+            awarded = award_fag(chat_id=msg.chat.id, user_id=winner.id, day_msk=result.day_msk)
+            if awarded:
+                new_bal = get_balance(winner.id, msg.chat.id, auto_start=True)
+                bonus_line = f"\nБонус: +{awarded} коинов (баланс: {new_bal})"
+    except Exception:
+        logger.exception("fag bonus award failed")
+
     await msg.answer(
         "Пидор дня: {who}\n"
         "За день: {day}\n"
-        "Статус: {status} (сброс после 00:00 МСК)".format(
+        "Статус: {status} (сброс после 00:00 МСК){bonus}".format(
             who=who,
             day=result.candidates_day_msk.strftime("%d.%m.%Y"),
             status=status,
+            bonus=bonus_line,
         )
     )
 

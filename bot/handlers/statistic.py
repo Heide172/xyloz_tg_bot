@@ -60,7 +60,7 @@ async def _check_chat_access(message: TgMessage, forced_chat_id: int | None) -> 
         return True
     if await _is_admin(message.bot, message.chat.id, message.from_user.id):
         return True
-    await message.answer("⛔️ Только для админов.")
+    await message.answer("Только для админов.")
     return False
 
 
@@ -191,7 +191,7 @@ async def cmd_mystats(message: TgMessage):
         ).scalar() or 0
 
         if msg_count == 0:
-            await send(f"📊 {_author_name(user)} · {days} дн.\n\nНет сообщений за период.")
+            await send(f"{_author_name(user)} · {days} дн.\n\nНет сообщений за период.")
             return
 
         total_chat = session.query(func.count(Message.id)).filter(
@@ -247,17 +247,17 @@ async def cmd_mystats(message: TgMessage):
         rank_str = f"место #{rank}" if rank else "—"
 
         lines = [
-            f"📊 {_author_name(user)} · {days} дн.",
+            f"{_author_name(user)} · {days} дн.",
             "",
-            f"💬 {msg_count} сообщ. ({share:.1f}% чата, {rank_str})",
-            f"⌨️ ср. длина {avg_len} · 🕒 пик {peak_str} · 🗓 {active_days} акт. дн.",
-            f"↩️ написал {replies_made} ответов · получил {replies_received}",
-            f"🔤 любимое слово: {fav}",
+            f"Сообщений: {msg_count} ({share:.1f}% чата, {rank_str})",
+            f"Ср. длина: {avg_len} · пик ~{peak_str} · активных дней: {active_days}",
+            f"Ответил: {replies_made} · получил ответов: {replies_received}",
+            f"Любимое слово: {fav}",
         ]
         await send("\n".join(lines))
     except Exception as exc:
         logger.exception("mystats failed")
-        await message.answer(f"⚠️ Ошибка: {exc}")
+        await message.answer(f"Ошибка: {exc}")
     finally:
         session.close()
 
@@ -281,7 +281,7 @@ async def cmd_chatstats(message: TgMessage):
         ).scalar() or 0
 
         if total == 0:
-            await send(f"📊 Чат · {days} дн.\n\nНет сообщений за период.")
+            await send(f"Чат · {days} дн.\n\nНет сообщений за период.")
             return
 
         active_users = session.query(func.count(distinct(Message.user_id))).filter(
@@ -321,24 +321,24 @@ async def cmd_chatstats(message: TgMessage):
         words_str = ", ".join(f"{w}×{c}" for w, c in top_words) if top_words else "—"
 
         lines = [
-            f"📊 Чат · {days} дн.",
+            f"Чат · {days} дн.",
             "",
-            f"💬 {total} сообщ. · 👥 {active_users} активных · 🔥 {busy_str}",
-            f"↩️ {reply_rate:.0f}% сообщений — ответы",
+            f"Сообщений: {total} · активных: {active_users} · пик-день: {busy_str}",
+            f"Ответы: {reply_rate:.0f}% от всех сообщений",
             "",
-            "🏆 Топ авторов",
+            "Топ авторов:",
         ]
         for i, (uid, cnt) in enumerate(top_rows, 1):
             share = cnt / total * 100
             name = names.get(uid, str(uid))
             lines.append(f"  {i}. {name:<{max_name_len}}  {cnt:>5}  ({share:.0f}%)")
         lines.append("")
-        lines.append(f"🔤 Топ слов: {words_str}")
+        lines.append(f"Топ слов: {words_str}")
 
         await send("\n".join(lines))
     except Exception as exc:
         logger.exception("chatstats failed")
-        await message.answer(f"⚠️ Ошибка: {exc}")
+        await message.answer(f"Ошибка: {exc}")
     finally:
         session.close()
 
@@ -365,7 +365,7 @@ async def cmd_who(message: TgMessage):
             .all()
         )
         if not rows:
-            await send(f"👥 Активные за {days} дн.\n\nНикого нет.")
+            await send(f"Активные за {days} дн.\n\nНикого нет.")
             return
 
         user_ids = [r[0] for r in rows]
@@ -397,7 +397,7 @@ async def cmd_who(message: TgMessage):
         max_name_len = max((len(names.get(uid, str(uid))) for uid in user_ids), default=10)
         max_count_len = max((len(str(c)) for _, c in rows), default=4)
 
-        lines = [f"👥 Активные за {days} дн.", ""]
+        lines = [f"Активные за {days} дн.", ""]
         for i, (uid, cnt) in enumerate(rows, 1):
             name = names.get(uid, str(uid))
             peak = peak_by_user.get(uid)
@@ -409,7 +409,7 @@ async def cmd_who(message: TgMessage):
         await send("\n".join(lines))
     except Exception as exc:
         logger.exception("who failed")
-        await message.answer(f"⚠️ Ошибка: {exc}")
+        await message.answer(f"Ошибка: {exc}")
     finally:
         session.close()
 
@@ -435,10 +435,10 @@ async def cmd_peakday(message: TgMessage):
             .limit(3).all()
         )
         if not rows:
-            await send(f"🔥 Пиковые дни за {days} дн.\n\nНет данных.")
+            await send(f"Пиковые дни за {days} дн.\n\nНет данных.")
             return
 
-        lines = [f"🔥 Пиковые дни за {days} дн.", ""]
+        lines = [f"Пиковые дни за {days} дн.", ""]
         for i, (day_dt, cnt) in enumerate(rows, 1):
             day_start = day_dt
             day_end = day_dt + timedelta(days=1)
@@ -456,7 +456,7 @@ async def cmd_peakday(message: TgMessage):
         await send("\n".join(lines))
     except Exception as exc:
         logger.exception("peakday failed")
-        await message.answer(f"⚠️ Ошибка: {exc}")
+        await message.answer(f"Ошибка: {exc}")
     finally:
         session.close()
 
@@ -487,7 +487,7 @@ async def cmd_streak(message: TgMessage):
             by_user.setdefault(uid, set()).add(d)
 
         if not by_user:
-            await send(f"🔥 Стрики активности за {days} дн.\n\nНет данных.")
+            await send(f"Стрики активности за {days} дн.\n\nНет данных.")
             return
 
         results: list[tuple[int, int, object]] = []  # (user_id, max_streak, last_day_of_streak)
@@ -513,7 +513,7 @@ async def cmd_streak(message: TgMessage):
 
         max_name_len = max((len(names.get(uid, str(uid))) for uid, _, _ in results), default=10)
 
-        lines = [f"🔥 Стрики активности за {days} дн.", ""]
+        lines = [f"Стрики активности за {days} дн.", ""]
         for i, (uid, streak, last_day) in enumerate(results[:15], 1):
             name = names.get(uid, str(uid))
             lines.append(f"{i:>2}. {name:<{max_name_len}}  {streak} дн.  (последний: {last_day.strftime('%d %b').lower()})")
@@ -521,7 +521,7 @@ async def cmd_streak(message: TgMessage):
         await send("\n".join(lines))
     except Exception as exc:
         logger.exception("streak failed")
-        await message.answer(f"⚠️ Ошибка: {exc}")
+        await message.answer(f"Ошибка: {exc}")
     finally:
         session.close()
 
@@ -529,16 +529,16 @@ async def cmd_streak(message: TgMessage):
 # ---------------- /help ----------------
 
 
-HELP_TEXT = """🤖 Команды бота
+HELP_TEXT = """Команды бота
 
-📊 Статистика
+[Статистика]
   /mystats [N]       твоя стата за N дней (по умолч. 14)
   /chatstats [N]     стата чата
   /who [N]           список активных, по строке на человека
   /peakday [N]       топ-3 самых активных дня
   /streak [N]        стрики активности подряд
 
-🧠 AI и пересказы
+[AI и пересказы]
   /summary [N]              пересказ N последних сообщений
   /summary_custom N | фокус кастомный пересказ
   /digest [N]               дайджест чата (с детекцией всплесков)
@@ -549,14 +549,34 @@ HELP_TEXT = """🤖 Команды бота
   /topics [N]               кластеризация чата по темам
   /ask <вопрос>             поиск ответа в истории чата (RAG)
 
-🎲 Игровое
-  /fag    случайный участник дня
+[Игровое]
+  /fag       случайный участник дня
+  /joke      анекдот дня
+  /phrase    фраза дня в стиле чата
 
-⚙️ Админ
+[Экономика]
+  /balance              твой баланс коинов (стартовый бонус 1000)
+  /leaderboard          топ балансов чата
+  /economy              общая экономика чата (банк, supply)
+  /transfer @user N     перевод коинов
+
+[Ставки]
+  /casino                               открыть Mini App (UI для всего ниже)
+  /market_create q | opt1 | opt2 | 7d   создать рынок (комиссия 100)
+  /markets [open|closed|resolved|all]   список рынков
+  /market <id>                          карточка рынка
+  /bet <id> <opt> <amount>              поставить
+  /portfolio                            мои ставки
+  /market_import <url>                  импорт из polymarket/manifold (комиссия 50)
+
+[Админ]
   /prompt_show, /prompt_set, /prompt_reset
   /model_show, /model_list, /model_set
   /admin_status                    полное состояние бота
   /backfill list|start|stop        управление backfill
+  /admin_adjust @user ±N [note]    ручная корректировка баланса
+  /market_resolve <id> <winner_idx> закрыть рынок и выплатить
+  /market_cancel <id>              отменить рынок с возвратом всех ставок
 
 Аргументы:
   N — число дней (1–365, по умолч. 14)

@@ -695,7 +695,7 @@ def _format_summary_header(data: DigestData) -> str:
     start = _to_msk(data.period_start).strftime("%Y-%m-%d")
     end = _to_msk(data.period_end).strftime("%Y-%m-%d")
     lines = [
-        "📰 Дайджест чата",
+        "Дайджест чата",
         "",
         f"Период: {start} — {end} ({data.days} дн.)",
         f"Всего сообщений: {data.total_messages} | Активных участников: {data.active_users}",

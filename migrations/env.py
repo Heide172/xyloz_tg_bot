@@ -11,6 +11,10 @@ from common.models.reaction import Reaction
 from common.models.bot_setting import BotSetting
 from common.models.daily_pick import DailyPick
 from common.models.message_embedding import MessageEmbedding
+from common.models.user_balance import UserBalance
+from common.models.economy_tx import EconomyTx
+from common.models.chat_bank import ChatBank
+from common.models.market import Market, MarketOption, Bet
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

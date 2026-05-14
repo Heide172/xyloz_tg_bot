@@ -12,7 +12,10 @@ from services.digest_service import (
     has_data_for_period,
 )
 from services.embed_worker import embed_pending_once
+from services.external_markets import auto_resolve_external
+from services.markets_service import auto_close_expired
 from services.nlp_classifier import classify_pending_once
+from services.nominations_service import run_daily_nominations
 
 logger = get_logger(__name__)
 
@@ -86,6 +89,31 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         max_instances=1,
         next_run_time=None,
     )
+    scheduler.add_job(
+        run_daily_nominations,
+        trigger=CronTrigger(hour=10, minute=0, timezone=MOSCOW_TZ),
+        args=(bot,),
+        id="daily_nominations",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        auto_resolve_external,
+        trigger=IntervalTrigger(minutes=30),
+        id="external_markets_check",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        auto_close_expired,
+        trigger=IntervalTrigger(minutes=5),
+        id="markets_auto_close",
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.start()
-    logger.info("scheduler started: weekly digest at Mon 09:00 MSK, nlp classify every 30s, embed every 45s")
+    logger.info(
+        "scheduler started: weekly digest Mon 09:00 MSK, daily nominations 10:00 MSK, "
+        "nlp classify 30s, embed 45s, external markets 30m, auto-close 5m"
+    )
     return scheduler

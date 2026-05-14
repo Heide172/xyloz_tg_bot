@@ -66,12 +66,12 @@ def _format_reasoning_preview(reasoning: str) -> str:
     tail = reasoning.replace("\n", " ").strip()
     if len(tail) > REASONING_TAIL_CHARS:
         tail = "…" + tail[-REASONING_TAIL_CHARS:]
-    return f"🧠 Анализирую чат…\n\n{tail}"
+    return f"Анализирую чат…\n\n{tail}"
 
 
 def _format_content_preview(days: int, content: str) -> str:
     body = content.strip()
-    head = f"📰 Дайджест чата за {days} дн. (генерирую…)"
+    head = f"Дайджест чата за {days} дн. (генерирую…)"
     return f"{head}\n\n{body}"[:MAX_TG_TEXT + 100]
 
 

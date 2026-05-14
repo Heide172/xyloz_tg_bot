@@ -46,24 +46,24 @@ async def _edit_mono(message: types.Message, text: str):
 
 
 def _format_status(data: dict) -> str:
-    lines = ["⚙️ Состояние бота", ""]
+    lines = ["Состояние бота", ""]
 
     build = data["build"]
-    lines.append(f"🤖 Версия: {build['sha']} ({build['time']})")
-    lines.append(f"⏱  Uptime: {data['uptime']}")
-    lines.append(f"🧠 Модель: {data['model']}")
+    lines.append(f"Версия:  {build['sha']} ({build['time']})")
+    lines.append(f"Uptime:  {data['uptime']}")
+    lines.append(f"Модель:  {data['model']}")
     lines.append("")
 
-    lines.append("🔌 Сервисы")
+    lines.append("[Сервисы]")
     for name, s in data["services"].items():
         if s.get("ok"):
-            lines.append(f"  ✅ {name:<10} {s['latency_ms']}ms")
+            lines.append(f"  [ok]   {name:<10} {s['latency_ms']}ms")
         else:
             err = s.get("error", "?")
-            lines.append(f"  ❌ {name:<10} {err}")
+            lines.append(f"  [fail] {name:<10} {err}")
     lines.append("")
 
-    lines.append("📊 Покрытие данных (топ-10 чатов)")
+    lines.append("[Покрытие данных] (топ-10 чатов)")
     for c in data["coverage"]:
         total = c["total"]
         emb = c["emb_done"]
@@ -78,7 +78,7 @@ def _format_status(data: dict) -> str:
         lines.append(f"    nlp: {nlp}/{total} ({nlp_pct:.1f}%, gap {gap_nlp})")
     lines.append("")
 
-    lines.append("📅 Планировщик")
+    lines.append("[Планировщик]")
     if data["scheduler"]:
         for j in data["scheduler"]:
             next_r = j["next_run"].strftime("%Y-%m-%d %H:%M:%S") if j["next_run"] else "—"
@@ -87,7 +87,7 @@ def _format_status(data: dict) -> str:
         lines.append("  (нет активных задач)")
     lines.append("")
 
-    lines.append("🔄 Backfill jobs")
+    lines.append("[Backfill jobs]")
     jobs = all_jobs()
     if not jobs:
         lines.append("  (не запускались)")
@@ -101,7 +101,7 @@ def _format_status(data: dict) -> str:
             lines.append(f"  {name:<10} {state}  processed={j.processed} rate={j.rate_per_sec:.1f}/s{elapsed}")
     lines.append("")
 
-    lines.append("💾 Топ таблиц по размеру")
+    lines.append("[Топ таблиц по размеру]")
     for t in data["tables"]:
         lines.append(f"  {t['name']:<28} {fmt_bytes(t['size_bytes']):>10} ({t['rows']} rows)")
 
@@ -111,16 +111,16 @@ def _format_status(data: dict) -> str:
 @router.message(Command("admin_status"))
 async def cmd_admin_status(msg: types.Message):
     if not _require_admin(msg):
-        await msg.answer("⛔️ Только для админов бота.")
+        await msg.answer("Только для админов бота.")
         return
-    progress = await msg.answer("⚙️ Собираю статус…")
+    progress = await msg.answer("Собираю статус…")
     try:
         data = await gather_status()
         text = _format_status(data)
         await _edit_mono(progress, text)
     except Exception as exc:
         logger.exception("admin_status failed")
-        await progress.edit_text(f"⚠️ Ошибка: {exc}")
+        await progress.edit_text(f"Ошибка: {exc}")
 
 
 # ---------------- /backfill ----------------
@@ -137,7 +137,7 @@ HELP_TEXT = (
 @router.message(Command("backfill"))
 async def cmd_backfill(msg: types.Message):
     if not _require_admin(msg):
-        await msg.answer("⛔️ Только для админов бота.")
+        await msg.answer("Только для админов бота.")
         return
 
     parts = (msg.text or "").split()
@@ -155,8 +155,8 @@ async def cmd_backfill(msg: types.Message):
             return
         name = parts[2].lower()
         started, info = start_job(name)
-        emoji = "🚀" if started else "⚠️"
-        await msg.answer(f"{emoji} backfill `{name}`: {info}", parse_mode="Markdown")
+        prefix = "[started]" if started else "[skip]"
+        await msg.answer(f"{prefix} backfill `{name}`: {info}", parse_mode="Markdown")
         if started:
             asyncio.create_task(_monitor_job_progress(msg, name))
         return
@@ -166,7 +166,7 @@ async def cmd_backfill(msg: types.Message):
             return
         name = parts[2].lower()
         ok = stop_job(name)
-        await msg.answer(("🛑 " if ok else "⚠️ ") + f"stop {name}: {'ok' if ok else 'не был запущен'}")
+        await msg.answer(("[stopped] " if ok else "[skip] ") + f"stop {name}: {'ok' if ok else 'не был запущен'}")
         return
 
     await _send_mono(msg, HELP_TEXT)
@@ -177,7 +177,7 @@ async def _backfill_list(msg: types.Message):
     if not jobs:
         await msg.answer("Backfill jobs ещё не запускались.")
         return
-    lines = ["🔄 Backfill jobs", ""]
+    lines = ["Backfill jobs", ""]
     for name, j in jobs.items():
         state = "RUNNING" if j.is_running else "done"
         elapsed_s = 0
@@ -199,14 +199,14 @@ async def _monitor_job_progress(msg: types.Message, name: str):
     if job is None:
         return
     last_processed = -1
-    progress_msg = await msg.answer(f"🔄 backfill `{name}` запущен…", parse_mode="Markdown")
+    progress_msg = await msg.answer(f"backfill `{name}` запущен…", parse_mode="Markdown")
     while job.is_running:
         await asyncio.sleep(15)
         if job.processed == last_processed:
             continue
         last_processed = job.processed
         text = (
-            f"🔄 backfill {name}: processed={job.processed} "
+            f"backfill {name}: processed={job.processed} "
             f"rate={job.rate_per_sec:.1f}/s "
             f"elapsed={int((datetime.utcnow() - job.started_at).total_seconds())}s"
         )
@@ -217,7 +217,7 @@ async def _monitor_job_progress(msg: types.Message, name: str):
             break
     # финальный апдейт
     final = (
-        f"✅ backfill {name} завершён\n"
+        f"backfill {name} завершён\n"
         f"processed={job.processed} rate={job.rate_per_sec:.1f}/s "
         f"elapsed={int((job.finished_at - job.started_at).total_seconds()) if job.finished_at and job.started_at else 0}s"
     )
