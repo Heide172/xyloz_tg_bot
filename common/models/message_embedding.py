@@ -11,5 +11,5 @@ class MessageEmbedding(Base):
 
     message_id = Column(BIGINT, ForeignKey("messages.id", ondelete="CASCADE"), primary_key=True)
     chat_id = Column(BIGINT, nullable=False, index=True)
-    embedding = Column(Vector(384), nullable=False)
+    embedding = Column(Vector(768), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

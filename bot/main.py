@@ -2,6 +2,7 @@ import asyncio
 import os
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators, BotCommandScopeDefault
+from handlers.admin_status import router as admin_status_router
 from handlers.ask import router as ask_router
 from handlers.digest import router as digest_router
 from handlers.messages import router as message_router
@@ -39,6 +40,8 @@ ADMIN_COMMANDS = PUBLIC_COMMANDS + [
     BotCommand(command="prompt_show", description="Текущий промпт"),
     BotCommand(command="prompt_set", description="Сменить промпт"),
     BotCommand(command="prompt_reset", description="Сбросить промпт"),
+    BotCommand(command="admin_status", description="Полное состояние бота"),
+    BotCommand(command="backfill", description="Управление backfill jobs"),
 ]
 
 
@@ -57,6 +60,7 @@ async def main():
     dp.include_router(mood_router)
     dp.include_router(topics_router)
     dp.include_router(ask_router)
+    dp.include_router(admin_status_router)
     dp.include_router(message_router)
     dp.include_router(reaction_router)
 

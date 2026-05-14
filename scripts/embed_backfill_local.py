@@ -47,8 +47,9 @@ from common.db.db import SessionLocal
 from common.models.message import Message
 from common.models.message_embedding import MessageEmbedding
 
-EMBED_MODEL = os.getenv("NLP_EMBED_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+EMBED_MODEL = os.getenv("NLP_EMBED_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
 MIN_TEXT_LEN = int(os.getenv("EMBED_MIN_TEXT_LEN", "10"))
+EMBED_MAX_LENGTH = int(os.getenv("NLP_EMBED_MAX_LENGTH", "512"))
 DB_RETRY_ATTEMPTS = 5
 DB_RETRY_SLEEP = 5
 
@@ -178,7 +179,8 @@ def main():
     device = _detect_device(args.device)
     print(f"loading {EMBED_MODEL} on device={device}")
     model = SentenceTransformer(EMBED_MODEL, device=device)
-    print("model ready")
+    model.max_seq_length = EMBED_MAX_LENGTH
+    print(f"model ready (dim={model.get_sentence_embedding_dimension()}, max_seq={model.max_seq_length})")
 
     batch_no = 0
     total = 0

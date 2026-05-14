@@ -19,6 +19,13 @@ logger = get_logger(__name__)
 MOSCOW_TZ = ZoneInfo("Europe/Moscow")
 TG_CHUNK = 3900
 
+# Module-level reference: используется в admin_status_service для отображения jobs.
+_scheduler: AsyncIOScheduler | None = None
+
+
+def get_scheduler() -> AsyncIOScheduler | None:
+    return _scheduler
+
 
 def _split_chunks(text: str, chunk_size: int = TG_CHUNK) -> list[str]:
     if len(text) <= chunk_size:
@@ -52,7 +59,9 @@ async def _weekly_digest_job(bot: Bot) -> None:
 
 
 def start_scheduler(bot: Bot) -> AsyncIOScheduler:
+    global _scheduler
     scheduler = AsyncIOScheduler(timezone=MOSCOW_TZ)
+    _scheduler = scheduler
     scheduler.add_job(
         _weekly_digest_job,
         trigger=CronTrigger(day_of_week="mon", hour=9, minute=0, timezone=MOSCOW_TZ),

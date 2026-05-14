@@ -15,8 +15,9 @@ from transformers import (
 
 SENTIMENT_MODEL = os.getenv("NLP_SENTIMENT_MODEL", "seara/rubert-tiny2-russian-sentiment")
 TOXICITY_MODEL = os.getenv("NLP_TOXICITY_MODEL", "cointegrated/rubert-tiny-toxicity")
-EMBED_MODEL = os.getenv("NLP_EMBED_MODEL", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+EMBED_MODEL = os.getenv("NLP_EMBED_MODEL", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
 MAX_LENGTH = int(os.getenv("NLP_MAX_LENGTH", "256"))
+EMBED_MAX_LENGTH = int(os.getenv("NLP_EMBED_MAX_LENGTH", "512"))
 BATCH_SIZE = int(os.getenv("NLP_BATCH_SIZE", "32"))
 EMBED_BATCH_SIZE = int(os.getenv("NLP_EMBED_BATCH_SIZE", "64"))
 
@@ -56,8 +57,10 @@ def _load_models():
     logger.info("loading embed model: %s", EMBED_MODEL)
     from sentence_transformers import SentenceTransformer
 
-    _state["embed"] = SentenceTransformer(EMBED_MODEL, device="cpu")
-    logger.info("models ready")
+    embed_model = SentenceTransformer(EMBED_MODEL, device="cpu")
+    embed_model.max_seq_length = EMBED_MAX_LENGTH
+    _state["embed"] = embed_model
+    logger.info("models ready (embed_dim=%d)", embed_model.get_sentence_embedding_dimension())
 
 
 @asynccontextmanager

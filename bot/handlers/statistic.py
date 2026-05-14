@@ -555,6 +555,8 @@ HELP_TEXT = """🤖 Команды бота
 ⚙️ Админ
   /prompt_show, /prompt_set, /prompt_reset
   /model_show, /model_list, /model_set
+  /admin_status                    полное состояние бота
+  /backfill list|start|stop        управление backfill
 
 Аргументы:
   N — число дней (1–365, по умолч. 14)

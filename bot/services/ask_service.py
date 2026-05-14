@@ -23,6 +23,8 @@ EMBED_TIMEOUT_SEC = float(os.getenv("NLP_EMBED_TIMEOUT_SEC", "60"))
 
 ASK_TOP_K = int(os.getenv("ASK_TOP_K", "25"))
 ASK_NEIGHBORS_EACH_SIDE = int(os.getenv("ASK_NEIGHBORS_EACH_SIDE", "2"))
+ASK_REWRITE_VARIANTS = int(os.getenv("ASK_REWRITE_VARIANTS", "3"))
+ASK_PER_QUERY_K = int(os.getenv("ASK_PER_QUERY_K", "15"))
 ASK_MIN_QUERY_LEN = 3
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -37,15 +39,53 @@ def parse_ask_query(text: str | None) -> str:
     return q
 
 
-async def _embed_query(text: str) -> list[float] | None:
+async def _embed_queries(texts: list[str]) -> list[list[float]]:
+    if not texts:
+        return []
     url = f"{NLP_SERVICE_URL}/embed/batch"
     timeout = aiohttp.ClientTimeout(total=EMBED_TIMEOUT_SEC)
     async with aiohttp.ClientSession() as http:
-        async with http.post(url, json={"texts": [text]}, timeout=timeout) as resp:
+        async with http.post(url, json={"texts": texts}, timeout=timeout) as resp:
             resp.raise_for_status()
             body = await resp.json()
-    embeds = body.get("embeddings") or []
+    return body.get("embeddings") or []
+
+
+async def _embed_query(text: str) -> list[float] | None:
+    embeds = await _embed_queries([text])
     return embeds[0] if embeds else None
+
+
+async def _rewrite_query(query: str) -> list[str]:
+    """Возвращает список формулировок: [original, variant1, variant2, ...]."""
+    task = prompts.load("ask_query_rewrite_task").format(query=query)
+    try:
+        raw = await asyncio.to_thread(
+            ai_client.call,
+            task,
+            get_summary_model(),
+            prompts.load("ask_query_rewrite_system"),
+        )
+    except Exception:
+        logger.exception("query rewrite failed, using only original")
+        return [query]
+
+    variants = [query]
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # на всякий случай чистим нумерацию/маркеры
+        import re
+        m = re.match(r"^[\d\-\*•.)\s]+(.+)$", line)
+        if m:
+            line = m.group(1).strip()
+        line = line.strip('"\'«»`')
+        if line and line.lower() != query.lower() and line not in variants:
+            variants.append(line)
+        if len(variants) >= 1 + ASK_REWRITE_VARIANTS:
+            break
+    return variants
 
 
 def _to_msk(dt: datetime) -> datetime:
@@ -171,6 +211,17 @@ def _format_context_for_llm(query: str, results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _merge_hits(per_query_hits: list[list[dict]]) -> list[dict]:
+    """Объединяем хиты из всех variant-поисков; для одного message_id берём max similarity."""
+    merged: dict[int, dict] = {}
+    for hits in per_query_hits:
+        for h in hits:
+            existing = merged.get(h["id"])
+            if existing is None or h["similarity"] > existing["similarity"]:
+                merged[h["id"]] = h
+    return sorted(merged.values(), key=lambda x: -x["similarity"])[:ASK_TOP_K]
+
+
 async def stream_ask(
     chat_id: int,
     query: str,
@@ -179,13 +230,24 @@ async def stream_ask(
 ) -> tuple[str, str, list[dict]]:
     """Возвращает (header, llm_answer, results).
 
-    Если эмбеддингов не найдено — header содержит ошибку, остальное пустое.
+    Pipeline:
+      1) LLM переписывает вопрос в 3 перефразировки (recall buff)
+      2) Embed всех вариантов батчем
+      3) Search каждым → объединяем по max similarity → top-K
+      4) Соседи ±2 для контекста
+      5) LLM-ответ с цитатами
     """
-    vec = await _embed_query(query)
-    if vec is None:
+    variants = await _rewrite_query(query)
+    embeds = await _embed_queries(variants)
+    if not embeds:
         return "Не удалось получить эмбеддинг вопроса.", "", []
 
-    hits = await asyncio.to_thread(_search_similar, chat_id, vec, ASK_TOP_K)
+    per_query_hits: list[list[dict]] = []
+    for vec in embeds:
+        hits = await asyncio.to_thread(_search_similar, chat_id, vec, ASK_PER_QUERY_K)
+        per_query_hits.append(hits)
+
+    hits = _merge_hits(per_query_hits)
     if not hits:
         return (
             "🔎 По этому чату нет проэмбедженных сообщений (ещё идёт backfill?).",
@@ -204,5 +266,11 @@ async def stream_ask(
         on_reasoning,
     )
 
-    header = f"🔎 Вопрос: {query}\n📚 Найдено релевантных: {len(hits)} (+{len(results) - len(hits)} соседей по времени)"
+    variants_note = ""
+    if len(variants) > 1:
+        variants_note = f"\n🔁 Перефразировок: {len(variants)} (orig + {len(variants)-1})"
+    header = (
+        f"🔎 Вопрос: {query}{variants_note}\n"
+        f"📚 Найдено релевантных: {len(hits)} (+{len(results) - len(hits)} соседей)"
+    )
     return header, answer, results
