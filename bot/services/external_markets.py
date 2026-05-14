@@ -97,15 +97,35 @@ def _parse_iso(value: str | None) -> datetime | None:
 
 
 async def _fetch_polymarket(slug: str) -> ExternalMarketData:
-    url = f"https://gamma-api.polymarket.com/markets?slug={slug}&limit=1"
-    body = await _http_get_json(url)
-    if not body:
-        raise InvalidArgument(f"Polymarket: рынок '{slug}' не найден")
-    items = body if isinstance(body, list) else [body]
-    if not items:
-        raise InvalidArgument(f"Polymarket: рынок '{slug}' не найден")
-    m = items[0]
+    """Поддерживаем только /market/<slug> (одиночный Yes/No).
+    Если URL ведёт на /event/<slug> (event-категория с под-рынками) —
+    говорим пользователю дать ссылку на конкретный под-рынок: parimutuel
+    с одним победителем плохо мапится на 33 независимых Yes/No вопроса.
+    """
+    body = await _http_get_json(
+        f"https://gamma-api.polymarket.com/markets?slug={slug}&limit=1"
+    )
+    items = body if isinstance(body, list) else [body] if body else []
+    if items:
+        return _build_single_market(items[0], slug)
 
+    # Не нашли как market — может это event? Диагностика.
+    body = await _http_get_json(
+        f"https://gamma-api.polymarket.com/events?slug={slug}"
+    )
+    events = body if isinstance(body, list) else [body] if body else []
+    if events:
+        ev = events[0]
+        n_subs = len(ev.get("markets") or [])
+        raise InvalidArgument(
+            f"Polymarket: '{slug}' — это event-категория ({n_subs} под-рынков), а не отдельный рынок. "
+            f"Открой нужный под-рынок на polymarket.com и скопируй URL вида polymarket.com/market/<slug>."
+        )
+
+    raise InvalidArgument(f"Polymarket: рынок '{slug}' не найден")
+
+
+def _build_single_market(m: dict, slug: str) -> ExternalMarketData:
     raw_outcomes = m.get("outcomes") or '["Yes","No"]'
     if isinstance(raw_outcomes, str):
         try:
@@ -128,17 +148,15 @@ async def _fetch_polymarket(slug: str) -> ExternalMarketData:
     is_resolved = bool(m.get("closed") or m.get("isResolved"))
     resolution = None
     if is_resolved and prices and len(prices) == len(outcomes):
-        max_idx = prices.index(max(prices))
-        resolution = outcomes[max_idx]
+        resolution = outcomes[prices.index(max(prices))]
 
-    close_time = _parse_iso(m.get("endDate") or m.get("closeTime"))
-    if close_time is None:
-        close_time = datetime.utcnow() + timedelta(days=30)
-
+    close_time = _parse_iso(m.get("endDate") or m.get("closeTime")) or (
+        datetime.utcnow() + timedelta(days=30)
+    )
     return ExternalMarketData(
         source="polymarket",
         external_id=str(m.get("id") or m.get("conditionId") or slug),
-        external_url=f"https://polymarket.com/event/{slug}",
+        external_url=f"https://polymarket.com/market/{slug}",
         question=m.get("question") or m.get("title") or "(no question)",
         options=outcomes,
         close_time=close_time,
