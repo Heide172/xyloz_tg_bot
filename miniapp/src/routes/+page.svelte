@@ -31,7 +31,7 @@
   }
 </script>
 
-<h1 class="h1">Казино</h1>
+<h1 class="h1">Бурмалда</h1>
 
 <section class="balance-card">
   {#if loading}

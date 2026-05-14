@@ -1,0 +1,146 @@
+/* Базовая палитра — надежный fallback. Telegram переменные перекрывают её, если заданы. */
+:root {
+  --bg:           #ffffff;
+  --bg-elev:      #f4f4f7;
+  --bg-elev-2:    #ebebef;
+  --text:         #1a1a1c;
+  --text-muted:   #6d6d72;
+  --separator:    #d1d1d6;
+  --accent:       #2481cc;
+  --accent-text:  #ffffff;
+  --accent-soft:  rgba(36, 129, 204, 0.16);
+  --positive:     #1e8a47;
+  --positive-soft:rgba(30, 138, 71, 0.14);
+  --destructive:  #cc2929;
+  --warning:      #e08f2c;
+  --shadow:       0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:           #0f0f12;
+    --bg-elev:      #1c1c1f;
+    --bg-elev-2:    #2a2a2e;
+    --text:         #f4f4f7;
+    --text-muted:   #98989d;
+    --separator:    #2c2c2e;
+    --accent:       #4fa3e3;
+    --accent-soft:  rgba(79, 163, 227, 0.22);
+    --positive:     #34c759;
+    --positive-soft:rgba(52, 199, 89, 0.18);
+    --destructive:  #ff453a;
+    --warning:      #ff9f0a;
+    --shadow:       0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 14px rgba(0, 0, 0, 0.4);
+  }
+}
+
+/* Когда тема Telegram тёмная, гарантируем контрастный текст,
+   даже если --tg-theme-text-color почему-то совпал с фоном. */
+.tg-dark {
+  --bg:           #0f0f12;
+  --bg-elev:      #1c1c1f;
+  --bg-elev-2:    #2a2a2e;
+  --text:         #f4f4f7;
+  --text-muted:   #98989d;
+  --separator:    #2c2c2e;
+  --accent:       #4fa3e3;
+  --accent-soft:  rgba(79, 163, 227, 0.22);
+  --positive:     #34c759;
+  --positive-soft:rgba(52, 199, 89, 0.18);
+  --destructive:  #ff453a;
+}
+
+.tg-light {
+  --bg:           #ffffff;
+  --bg-elev:      #f4f4f7;
+  --bg-elev-2:    #ebebef;
+  --text:         #1a1a1c;
+  --text-muted:   #6d6d72;
+  --separator:    #d1d1d6;
+}
+
+* ,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font-family: inherit;
+  color: var(--text);
+}
+
+code {
+  background: var(--bg-elev-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+/* Утилитарные классы */
+.h1 {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 6px 0 16px;
+  line-height: 1.1;
+}
+.h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.muted   { color: var(--text-muted); }
+.danger  { color: var(--destructive); }
+.success { color: var(--positive); }
+
+.card {
+  background: var(--bg-elev);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 5px;
+  background: var(--bg-elev-2);
+  color: var(--text-muted);
+}
+.badge-open      { background: var(--accent-soft);   color: var(--accent); }
+.badge-resolved  { background: var(--positive-soft); color: var(--positive); }
+.badge-closed,
+.badge-cancelled { background: var(--bg-elev-2);     color: var(--text-muted); }
