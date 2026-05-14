@@ -111,12 +111,18 @@ def _extract_best(rows: list[dict]) -> tuple[str, float]:
 
 
 def _extract_toxicity_prob(rows: list[dict]) -> float:
+    """Toxicity = 1 - P(non-toxic).
+
+    Модель cointegrated/rubert-tiny-toxicity возвращает 5 классов:
+    non-toxic, insult, obscenity, threat, dangerous. Toxic-вероятность —
+    это вероятность не быть нормальным сообщением.
+    """
     for r in rows:
         lbl = r["label"].lower()
-        if "toxic" in lbl and "non" not in lbl and "not" not in lbl:
-            return float(r["score"])
-    # fallback: predict highest score's complement if labels weird
-    return 0.0
+        if "non" in lbl and "toxic" in lbl:
+            return max(0.0, min(1.0, 1.0 - float(r["score"])))
+    # fallback: модель отдаёт только токсичные классы — суммируем их вероятности
+    return min(1.0, sum(float(r["score"]) for r in rows))
 
 
 @app.get("/health")

@@ -41,9 +41,14 @@
       )
     : 0;
 
+  // Когда state приходит с сервера — он уже учёл offline-доход за elapsed.
+  // Поэтому optimisticCp начинает копиться с нуля.
+  let lastStateAt = Date.now();
+
   onMount(async () => {
     try {
       state = await api.farmState();
+      lastStateAt = Date.now();
       displayCp = state.cp_balance;
       optimisticCp = 0;
     } catch (e: any) {
@@ -87,10 +92,11 @@
     try {
       const next = await api.farmTap(count, elapsedMs);
       state = next;
-      optimisticCp = Math.max(0, optimisticCp - count * state.tap_level);
-      displayCp = state.cp_balance + optimisticCp;
+      lastStateAt = Date.now();
+      // Сервер уже всё учёл — обнуляем локальную оптимистику.
+      optimisticCp = 0;
+      displayCp = state.cp_balance;
     } catch (e: any) {
-      // если accept был меньше — отбрасываем оптимистично прибавленные
       err = e?.message ?? null;
     } finally {
       busy = false;
@@ -130,6 +136,9 @@
     await flushTaps();
     try {
       state = await api.farmUpgradeTap();
+      lastStateAt = Date.now();
+      optimisticCp = 0;
+      displayCp = state.cp_balance;
       haptic('success');
     } catch (e: any) {
       showAlert(e?.message ?? 'Не получилось');
@@ -142,6 +151,9 @@
     await flushTaps();
     try {
       state = await api.farmUpgradeAuto();
+      lastStateAt = Date.now();
+      optimisticCp = 0;
+      displayCp = state.cp_balance;
       haptic('success');
     } catch (e: any) {
       showAlert(e?.message ?? 'Не получилось');
@@ -154,7 +166,9 @@
     await flushTaps();
     try {
       state = await api.farmConvert(convertAmount);
+      lastStateAt = Date.now();
       optimisticCp = 0;
+      displayCp = state.cp_balance;
       haptic('success');
       showAlert(`+${convertAmount} гривен на баланс`);
     } catch (e: any) {
@@ -217,7 +231,7 @@
       <button
         class="upgrade"
         on:click={upgradeTap}
-        disabled={state.next_tap_cost === 0 || displayCp < state.next_tap_cost}
+        disabled={state.next_tap_cost === 0 || state.cp_balance < state.next_tap_cost}
       >
         <div class="up-row">
           <span class="up-title">Сила тапа</span>
@@ -234,7 +248,7 @@
       <button
         class="upgrade"
         on:click={upgradeAuto}
-        disabled={state.next_auto_cost === 0 || displayCp < state.next_auto_cost}
+        disabled={state.next_auto_cost === 0 || state.cp_balance < state.next_auto_cost}
       >
         <div class="up-row">
           <span class="up-title">Автокликер</span>
