@@ -21,8 +21,8 @@ logger = get_logger(__name__)
 NLP_SERVICE_URL = os.getenv("NLP_SERVICE_URL", "http://nlp:8000").rstrip("/")
 EMBED_TIMEOUT_SEC = float(os.getenv("NLP_EMBED_TIMEOUT_SEC", "60"))
 
-ASK_TOP_K = int(os.getenv("ASK_TOP_K", "30"))
-ASK_CONTEXT_WINDOW_MIN = int(os.getenv("ASK_CONTEXT_WINDOW_MIN", "3"))
+ASK_TOP_K = int(os.getenv("ASK_TOP_K", "25"))
+ASK_NEIGHBORS_EACH_SIDE = int(os.getenv("ASK_NEIGHBORS_EACH_SIDE", "2"))
 ASK_MIN_QUERY_LEN = 3
 MSK = ZoneInfo("Europe/Moscow")
 
@@ -90,35 +90,44 @@ def _search_similar(chat_id: int, query_vec: list[float], k: int) -> list[dict]:
         session.close()
 
 
-def _expand_with_neighbors(chat_id: int, hits: list[dict], window_min: int) -> list[dict]:
-    """Для каждого hit'а добавляем сообщения ±window_min минут в том же чате."""
-    if not hits:
+def _expand_with_neighbors(chat_id: int, hits: list[dict], each_side: int) -> list[dict]:
+    """Для каждого hit'а добавляем по N соседних сообщений с каждой стороны (по позиции в чате)."""
+    if not hits or each_side <= 0:
         return hits
-    from datetime import timedelta
-
-    window = timedelta(minutes=window_min)
-    hit_ids = {h["id"] for h in hits}
 
     session = SessionLocal()
     try:
         all_results: dict[int, dict] = {h["id"]: h for h in hits}
         for hit in hits:
-            start = hit["created_at"] - window
-            end = hit["created_at"] + window
-            rows = (
+            # До: предыдущие N сообщений по created_at
+            before = (
                 session.query(Message, User)
                 .outerjoin(User, Message.user_id == User.id)
                 .filter(
                     Message.chat_id == chat_id,
-                    Message.created_at >= start,
-                    Message.created_at <= end,
+                    Message.created_at < hit["created_at"],
+                    Message.text.isnot(None),
+                    Message.text != "",
+                )
+                .order_by(Message.created_at.desc())
+                .limit(each_side)
+                .all()
+            )
+            # После: следующие N сообщений
+            after = (
+                session.query(Message, User)
+                .outerjoin(User, Message.user_id == User.id)
+                .filter(
+                    Message.chat_id == chat_id,
+                    Message.created_at > hit["created_at"],
                     Message.text.isnot(None),
                     Message.text != "",
                 )
                 .order_by(Message.created_at.asc())
+                .limit(each_side)
                 .all()
             )
-            for msg, user in rows:
+            for msg, user in list(before) + list(after):
                 if msg.id in all_results:
                     continue
                 all_results[msg.id] = {
@@ -145,7 +154,7 @@ def _format_context_for_llm(query: str, results: list[dict]) -> str:
         "",
         f"ВОПРОС ПОЛЬЗОВАТЕЛЯ: {query}",
         "",
-        f"НАЙДЕННЫЕ СООБЩЕНИЯ (релевантных по поиску: {hits_count}, плюс соседи ±{ASK_CONTEXT_WINDOW_MIN} мин по времени для контекста; всего показано: {len(results)}; отсортированы хронологически):",
+        f"НАЙДЕННЫЕ СООБЩЕНИЯ (★ релевантных: {hits_count}, плюс по ±{ASK_NEIGHBORS_EACH_SIDE} соседних сообщения вокруг каждого ★ для контекста; всего: {len(results)}; отсортированы хронологически):",
     ]
     for r in results:
         ts = _to_msk(r["created_at"]).strftime("%Y-%m-%d %H:%M")
@@ -184,7 +193,7 @@ async def stream_ask(
             [],
         )
 
-    results = await asyncio.to_thread(_expand_with_neighbors, chat_id, hits, ASK_CONTEXT_WINDOW_MIN)
+    results = await asyncio.to_thread(_expand_with_neighbors, chat_id, hits, ASK_NEIGHBORS_EACH_SIDE)
     prompt = _format_context_for_llm(query, results)
     answer = await asyncio.to_thread(
         ai_client.stream,
