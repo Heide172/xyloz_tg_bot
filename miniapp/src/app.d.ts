@@ -11,6 +11,10 @@ declare global {
       user?: { id: number; username?: string; first_name?: string; last_name?: string };
       auth_date?: number;
       query_id?: string;
+      start_param?: string;
+      chat?: { id: number; type: string; title?: string; username?: string };
+      chat_type?: string;
+      chat_instance?: string;
     };
     colorScheme: 'light' | 'dark';
     themeParams: Record<string, string>;

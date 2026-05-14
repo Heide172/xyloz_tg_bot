@@ -14,7 +14,7 @@
 
   let selectedPos = 1;
   let amount = 100;
-  let presets = [50, 100, 500, 1000];
+  const presets = [50, 100, 500, 1000];
   let posting = false;
 
   async function load() {
@@ -24,7 +24,8 @@
       const [m, b] = await Promise.all([api.market(marketId), api.balance()]);
       market = m;
       balance = b;
-      selectedPos = m.options[0]?.position + 1 || 1;
+      const first = m.options[0];
+      selectedPos = first ? first.position + 1 : 1;
     } catch (e: any) {
       err = e?.message ?? 'Не удалось загрузить';
     } finally {
@@ -98,22 +99,24 @@
 <a class="back" href={`/markets` + window.location.search}>← к рынкам</a>
 
 {#if loading}
-  <div class="hint">Загрузка…</div>
+  <div class="muted">Загрузка…</div>
 {:else if err || !market}
-  <div class="error">{err ?? 'не найдено'}</div>
+  <div class="danger">{err ?? 'не найдено'}</div>
 {:else}
-  <div class="card">
-    <div class="status-line">
+  <section class="card">
+    <div class="head">
       <span class="badge badge-{market.status}">{market.status}</span>
-      <span class="hint">{market.type}</span>
+      <span class="muted small">{market.type}</span>
     </div>
     <h2 class="q">{market.question}</h2>
     <div class="meta">
-      пул {fmtCoins(market.total_pool)} · ставок {market.bets_count}
+      <span><strong>{fmtCoins(market.total_pool)}</strong> в пуле</span>
+      <span class="muted">·</span>
+      <span><strong>{market.bets_count}</strong> ставок</span>
     </div>
-    <div class="meta">закрытие: {fmtDate(market.closes_at)}</div>
+    <div class="muted small" style="margin-top: 4px">закрытие: {fmtDate(market.closes_at)}</div>
     {#if market.external_url}
-      <div class="meta">
+      <div class="small" style="margin-top: 4px">
         <a href={market.external_url} target="_blank" rel="noreferrer">внешний рынок ↗</a>
       </div>
     {/if}
@@ -131,20 +134,26 @@
             <span class="opt-share">{(o.share * 100).toFixed(0)}%</span>
           </div>
           <div class="opt-track">
-            <div class="opt-fill" style="width: {Math.max(2, o.share * 100)}%"></div>
+            <div class="opt-fill" style="width: {Math.max(3, o.share * 100)}%"></div>
           </div>
-          <div class="opt-pool">пул {fmtCoins(o.pool)}</div>
+          <div class="opt-pool muted">пул {fmtCoins(o.pool)}</div>
         </button>
       {/each}
     </div>
 
     {#if market.status === 'open'}
       <div class="bet">
-        <div class="bet-balance">
-          Баланс: <strong>{balance ? fmtCoins(balance.balance) : '—'}</strong>
+        <div class="bet-balance muted small">
+          Баланс: <strong style="color: var(--text);">{balance ? fmtCoins(balance.balance) : '—'}</strong>
         </div>
         <div class="amount-row">
-          <input type="number" bind:value={amount} min="10" step="10" />
+          <input
+            type="number"
+            bind:value={amount}
+            min="10"
+            step="10"
+            inputmode="numeric"
+          />
           <div class="presets">
             {#each presets as p}
               <button class="preset" on:click={() => (amount = p)}>{p}</button>
@@ -155,61 +164,39 @@
       </div>
     {:else if market.winning_option_id !== null}
       <div class="resolved">
-        Победила:
-        <strong>
-          {market.options.find((o) => o.id === market.winning_option_id)?.label ?? '?'}
-        </strong>
+        Победила: <strong>{market.options.find((o) => o.id === market.winning_option_id)?.label ?? '?'}</strong>
       </div>
     {/if}
-  </div>
+  </section>
 {/if}
 
 <style>
   .back {
     display: inline-block;
-    margin-bottom: 10px;
-    font-size: 13px;
+    margin-bottom: 12px;
+    font-size: 14px;
+    color: var(--text-muted);
   }
-  .card {
-    background: var(--section-bg);
-    border-radius: 14px;
-    padding: 16px;
-  }
-  .status-line {
+  .head {
     display: flex;
     gap: 8px;
     align-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
+  }
+  .small {
+    font-size: 12px;
   }
   .q {
-    font-size: 18px;
-    margin: 4px 0 12px;
+    font-size: 19px;
+    margin: 4px 0 14px;
     line-height: 1.35;
+    font-weight: 600;
   }
   .meta {
-    color: var(--hint);
-    font-size: 13px;
-    margin-bottom: 4px;
-  }
-  .badge {
-    padding: 2px 8px;
-    border-radius: 5px;
-    font-size: 11px;
-    text-transform: uppercase;
-    background: rgba(0, 0, 0, 0.08);
-  }
-  .badge-open {
-    background: rgba(36, 129, 204, 0.18);
-    color: var(--link);
-  }
-  .badge-resolved {
-    background: rgba(0, 128, 0, 0.18);
-    color: #1e8a47;
-  }
-  .badge-cancelled,
-  .badge-closed {
-    background: rgba(128, 128, 128, 0.18);
-    color: var(--hint);
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    font-size: 14px;
   }
   .options {
     display: flex;
@@ -220,15 +207,20 @@
   .option {
     width: 100%;
     background: var(--bg);
-    border: 2px solid transparent;
-    border-radius: 10px;
-    padding: 12px;
+    border: 2px solid var(--separator);
+    border-radius: 12px;
+    padding: 14px;
     text-align: left;
     cursor: pointer;
     color: var(--text);
+    transition: all 0.15s ease;
+  }
+  .option:hover {
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--separator));
   }
   .option.selected {
-    border-color: var(--button);
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
   .option:disabled {
     opacity: 0.6;
@@ -238,37 +230,38 @@
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }
   .opt-label {
-    font-weight: 500;
+    font-weight: 600;
+    font-size: 15px;
   }
   .opt-share {
     font-variant-numeric: tabular-nums;
-    color: var(--hint);
+    color: var(--text-muted);
+    font-size: 13px;
   }
   .opt-track {
     height: 6px;
-    background: rgba(0, 0, 0, 0.08);
+    background: var(--bg-elev-2);
     border-radius: 3px;
     overflow: hidden;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
   }
   .opt-fill {
     height: 100%;
-    background: var(--button);
+    background: var(--accent);
   }
   .opt-pool {
-    font-size: 11px;
-    color: var(--hint);
+    font-size: 12px;
   }
   .bet {
-    margin-top: 14px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--separator);
   }
   .bet-balance {
-    font-size: 13px;
-    color: var(--hint);
-    margin-bottom: 8px;
+    margin-bottom: 10px;
   }
   .amount-row {
     display: flex;
@@ -277,38 +270,34 @@
   }
   .amount-row input {
     flex: 0 0 110px;
-    padding: 10px 12px;
+    padding: 11px 12px;
     border: 1px solid var(--separator);
-    border-radius: 8px;
+    border-radius: 9px;
     font-size: 16px;
     background: var(--bg);
-    color: var(--text);
   }
   .presets {
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
+    flex: 1;
   }
   .preset {
-    padding: 8px 10px;
+    padding: 8px 12px;
     border: 0;
-    background: var(--bg);
+    background: var(--bg-elev-2);
     color: var(--text);
-    border-radius: 7px;
+    border-radius: 8px;
     font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
   }
   .resolved {
-    margin-top: 12px;
-    padding: 10px;
-    background: rgba(0, 128, 0, 0.1);
-    border-radius: 8px;
+    margin-top: 14px;
+    padding: 12px;
+    background: var(--positive-soft);
+    color: var(--positive);
+    border-radius: 10px;
     font-size: 14px;
-  }
-  .hint {
-    color: var(--hint);
-  }
-  .error {
-    color: var(--destructive);
   }
 </style>

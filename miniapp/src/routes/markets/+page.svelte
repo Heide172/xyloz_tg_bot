@@ -25,7 +25,7 @@
   onMount(load);
 </script>
 
-<h1 class="title">Рынки</h1>
+<h1 class="h1">Рынки</h1>
 
 <div class="tabs">
   {#each ['open', 'closed', 'resolved', 'all'] as tab}
@@ -43,112 +43,97 @@
 </div>
 
 {#if loading}
-  <div class="hint">Загрузка…</div>
+  <div class="muted">Загрузка…</div>
 {:else if err}
-  <div class="error">{err}</div>
+  <div class="danger">{err}</div>
 {:else if items.length === 0}
-  <div class="hint">Рынков нет.</div>
+  <div class="muted">Рынков нет.</div>
 {:else}
   <div class="list">
     {#each items as m}
-      <a class="row" href={`/markets/${m.id}` + window.location.search}>
-        <div class="row-q">{shortLabel(m.question, 90)}</div>
-        <div class="row-meta">
+      <a class="row card" href={`/markets/${m.id}` + window.location.search}>
+        <div class="head-line">
           <span class="badge badge-{m.status}">{m.status}</span>
-          <span>пул {fmtCoins(m.total_pool)}</span>
-          <span>ставок {m.bets_count}</span>
+          <span class="muted small">пул {fmtCoins(m.total_pool)} · ставок {m.bets_count}</span>
         </div>
+        <div class="q">{shortLabel(m.question, 110)}</div>
         <div class="bars">
           {#each m.options as o}
             <div class="bar">
-              <div class="bar-label">{shortLabel(o.label, 28)}</div>
+              <div class="bar-label" title={o.label}>{shortLabel(o.label, 24)}</div>
               <div class="bar-track">
-                <div class="bar-fill" style="width: {Math.max(2, o.share * 100)}%"></div>
+                <div class="bar-fill" style="width: {Math.max(3, o.share * 100)}%"></div>
               </div>
-              <div class="bar-val">{(o.share * 100).toFixed(0)}%</div>
+              <div class="bar-val muted">{(o.share * 100).toFixed(0)}%</div>
             </div>
           {/each}
         </div>
-        <div class="row-foot">закрытие: {fmtDate(m.closes_at)}</div>
+        <div class="muted small">закрытие: {fmtDate(m.closes_at)}</div>
       </a>
     {/each}
   </div>
 {/if}
 
 <style>
-  .title {
-    font-size: 22px;
-    margin: 4px 0 12px;
-  }
   .tabs {
     display: flex;
     gap: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
+    background: var(--bg-elev);
+    padding: 4px;
+    border-radius: 11px;
   }
   .tab {
     flex: 1;
     padding: 8px 10px;
     border: 0;
-    background: var(--section-bg);
-    color: var(--text);
+    background: transparent;
+    color: var(--text-muted);
     border-radius: 8px;
     font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
+    text-transform: capitalize;
+    transition: all 0.15s ease;
   }
   .tab.active {
-    background: var(--button);
-    color: var(--button-text);
+    background: var(--bg);
+    color: var(--text);
+    box-shadow: var(--shadow);
   }
   .list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
   .row {
     display: block;
-    background: var(--section-bg);
-    border-radius: 12px;
-    padding: 14px;
     color: var(--text);
+    transition: transform 0.15s ease;
   }
-  .row-q {
-    font-weight: 500;
-    margin-bottom: 8px;
-    line-height: 1.35;
+  .row:active {
+    transform: scale(0.99);
   }
-  .row-meta {
+  .head-line {
     display: flex;
+    justify-content: space-between;
+    align-items: center;
     gap: 10px;
-    font-size: 12px;
-    color: var(--hint);
     margin-bottom: 10px;
-    flex-wrap: wrap;
   }
-  .badge {
-    padding: 1px 6px;
-    border-radius: 4px;
-    font-size: 11px;
-    text-transform: uppercase;
-    background: rgba(0, 0, 0, 0.08);
+  .small {
+    font-size: 12px;
   }
-  .badge-open {
-    background: rgba(36, 129, 204, 0.18);
-    color: var(--link);
-  }
-  .badge-resolved {
-    background: rgba(0, 128, 0, 0.18);
-    color: #1e8a47;
-  }
-  .badge-cancelled,
-  .badge-closed {
-    background: rgba(128, 128, 128, 0.18);
-    color: var(--hint);
+  .q {
+    font-weight: 500;
+    margin-bottom: 12px;
+    line-height: 1.4;
   }
   .bars {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin-bottom: 8px;
+    gap: 7px;
+    margin-bottom: 10px;
   }
   .bar {
     display: grid;
@@ -158,35 +143,23 @@
     font-size: 13px;
   }
   .bar-label {
-    color: var(--hint);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .bar-track {
     height: 8px;
-    background: rgba(0, 0, 0, 0.08);
+    background: var(--bg-elev-2);
     border-radius: 4px;
     overflow: hidden;
   }
   .bar-fill {
     height: 100%;
-    background: var(--button);
+    background: var(--accent);
     border-radius: 4px;
   }
   .bar-val {
     text-align: right;
-    color: var(--hint);
     font-variant-numeric: tabular-nums;
-  }
-  .row-foot {
-    font-size: 12px;
-    color: var(--hint);
-  }
-  .hint {
-    color: var(--hint);
-  }
-  .error {
-    color: var(--destructive);
   }
 </style>

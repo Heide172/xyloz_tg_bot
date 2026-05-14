@@ -19,31 +19,40 @@
   });
 
   const tiles = [
-    { href: '/markets', title: 'Рынки', desc: 'Все открытые ставки' },
+    { href: '/markets', title: 'Рынки', desc: 'Открытые ставки' },
     { href: '/portfolio', title: 'Портфолио', desc: 'Мои ставки' },
-    { href: '/leaderboard', title: 'Лидерборд', desc: 'Топ балансов' },
-    { href: '/create', title: 'Создать рынок', desc: 'Любой участник, комиссия 100' },
-    { href: '/import', title: 'Импорт рынка', desc: 'polymarket / manifold' }
+    { href: '/leaderboard', title: 'Топ', desc: 'Лидерборд чата' }
   ];
+
+  function displayName(m: MeResponse): string {
+    if (m.user.username) return '@' + m.user.username;
+    if (m.user.fullname) return m.user.fullname;
+    return 'Без имени';
+  }
 </script>
 
-<h1 class="title">xyloz bot</h1>
+<h1 class="h1">Казино</h1>
 
-<section class="card balance">
+<section class="balance-card">
   {#if loading}
-    <div class="hint">Загрузка…</div>
+    <div class="loading-line" style="width: 60%"></div>
+    <div class="loading-line big" style="width: 50%; margin-top: 14px"></div>
+    <div class="loading-line" style="width: 40%; margin-top: 8px"></div>
   {:else if err}
-    <div class="error">{err}</div>
+    <div class="danger">{err}</div>
   {:else if me}
-    <div class="user-line">
-      {me.user.username ? '@' + me.user.username : me.user.fullname ?? 'Без имени'}
-    </div>
+    <div class="user-line muted">{displayName(me)}</div>
     {#if me.balance}
-      <div class="big-num">{fmtCoins(me.balance.balance)}</div>
-      <div class="hint">коинов на балансе</div>
-      <div class="bank">Банк чата: {fmtCoins(me.balance.bank)}</div>
+      <div class="big-num">
+        {fmtCoins(me.balance.balance)}
+        <span class="big-suf muted">коинов</span>
+      </div>
+      <div class="bank-line">
+        <span class="muted">Банк чата:</span>
+        <strong>{fmtCoins(me.balance.bank)}</strong>
+      </div>
     {:else}
-      <div class="hint">chat_id не передан — баланс недоступен</div>
+      <div class="muted">chat_id не передан — баланс недоступен</div>
     {/if}
   {/if}
 </section>
@@ -52,63 +61,81 @@
   {#each tiles as t}
     <a class="tile" href={t.href + (typeof window !== 'undefined' ? window.location.search : '')}>
       <span class="tile-title">{t.title}</span>
-      <span class="tile-desc">{t.desc}</span>
+      <span class="tile-desc muted">{t.desc}</span>
     </a>
   {/each}
 </section>
 
 <style>
-  .title {
-    font-size: 22px;
-    margin: 4px 0 16px;
+  .balance-card {
+    background: linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 75%, #000) 100%);
+    color: var(--accent-text);
+    padding: 22px 20px;
+    border-radius: 18px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow);
   }
-  .card {
-    background: var(--section-bg);
-    padding: 18px;
-    border-radius: 14px;
-    margin-bottom: 16px;
+  .balance-card :global(.muted) {
+    color: color-mix(in srgb, var(--accent-text) 75%, transparent);
   }
   .user-line {
     font-size: 13px;
-    color: var(--hint);
-    margin-bottom: 6px;
+    margin-bottom: 4px;
   }
   .big-num {
-    font-size: 38px;
-    font-weight: 600;
-    line-height: 1.1;
+    font-size: 42px;
+    font-weight: 700;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
   }
-  .hint {
-    color: var(--hint);
+  .big-suf {
+    font-size: 14px;
+    font-weight: 500;
+    margin-left: 6px;
+  }
+  .bank-line {
+    margin-top: 14px;
     font-size: 13px;
+    display: flex;
+    gap: 6px;
   }
-  .bank {
-    margin-top: 12px;
-    font-size: 13px;
-    color: var(--hint);
-  }
-  .error {
-    color: var(--destructive);
-  }
+
   .tiles {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 10px;
   }
   .tile {
+    background: var(--bg-elev);
+    border-radius: 14px;
+    padding: 16px;
+    color: var(--text);
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 14px;
-    background: var(--section-bg);
-    border-radius: 12px;
-    color: var(--text);
+    box-shadow: var(--shadow);
+    transition: transform 0.15s ease;
+  }
+  .tile:active {
+    transform: scale(0.97);
+  }
+  .tile:nth-child(3) {
+    grid-column: 1 / -1;
   }
   .tile-title {
     font-weight: 600;
+    font-size: 15px;
   }
   .tile-desc {
     font-size: 12px;
-    color: var(--hint);
+  }
+
+  .loading-line {
+    height: 14px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent-text) 25%, transparent);
+  }
+  .loading-line.big {
+    height: 32px;
   }
 </style>

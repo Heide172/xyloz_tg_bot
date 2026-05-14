@@ -20,34 +20,38 @@
   });
 </script>
 
-<h1 class="title">Портфолио</h1>
+<h1 class="h1">Портфолио</h1>
 
 {#if loading}
-  <div class="hint">Загрузка…</div>
+  <div class="muted">Загрузка…</div>
 {:else if err}
-  <div class="error">{err}</div>
+  <div class="danger">{err}</div>
 {:else if items.length === 0}
-  <div class="hint">У тебя нет ставок в этом чате.</div>
+  <div class="muted">У тебя нет ставок в этом чате.</div>
 {:else}
   <div class="list">
     {#each items as it}
-      <a class="row" href={`/markets/${it.market_id}` + window.location.search}>
-        <div class="status-line">
+      <a class="row card" href={`/markets/${it.market_id}` + window.location.search}>
+        <div class="head">
           <span class="badge badge-{it.status}">{it.status}</span>
-          <span class="date">{fmtDate(it.created_at)}</span>
+          <span class="muted small">{fmtDate(it.created_at)}</span>
         </div>
-        <div class="q">{shortLabel(it.question, 100)}</div>
+        <div class="q">{shortLabel(it.question, 110)}</div>
         <div class="bet-line">
-          <span>«{it.option_label}»</span>
-          <span class="amt">ставка {fmtCoins(it.amount)}</span>
+          <span>на «<strong>{it.option_label}</strong>»</span>
+          <span class="muted">{fmtCoins(it.amount)}</span>
         </div>
-        {#if it.status === 'resolved' && it.payout !== null}
-          <div class="payout {it.payout > 0 ? 'win' : 'lose'}">
-            {it.payout > 0 ? '+' : ''}{fmtCoins(it.payout - it.amount)}
-            ({it.payout > 0 ? 'выплата ' + fmtCoins(it.payout) : 'проигрыш'})
-          </div>
+        {#if it.status === 'resolved' && it.payout !== null && it.payout !== undefined}
+          {#if it.payout > 0}
+            <div class="payout success">
+              <strong>+{fmtCoins(it.payout - it.amount)}</strong>
+              <span class="muted small">(выплата {fmtCoins(it.payout)})</span>
+            </div>
+          {:else}
+            <div class="payout danger">проигрыш −{fmtCoins(it.amount)}</div>
+          {/if}
         {:else if it.refunded}
-          <div class="payout">возврат {fmtCoins(it.amount)}</div>
+          <div class="payout muted">возврат {fmtCoins(it.amount)}</div>
         {/if}
       </a>
     {/each}
@@ -55,80 +59,38 @@
 {/if}
 
 <style>
-  .title {
-    font-size: 22px;
-    margin: 4px 0 12px;
-  }
   .list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
   .row {
-    background: var(--section-bg);
-    border-radius: 12px;
-    padding: 14px;
-    color: var(--text);
     display: block;
+    color: var(--text);
   }
-  .status-line {
+  .head {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }
-  .badge {
-    padding: 1px 6px;
-    border-radius: 4px;
-    font-size: 11px;
-    text-transform: uppercase;
-    background: rgba(0, 0, 0, 0.08);
-  }
-  .badge-open {
-    background: rgba(36, 129, 204, 0.18);
-    color: var(--link);
-  }
-  .badge-resolved {
-    background: rgba(0, 128, 0, 0.18);
-    color: #1e8a47;
-  }
-  .badge-cancelled,
-  .badge-closed {
-    background: rgba(128, 128, 128, 0.18);
-    color: var(--hint);
-  }
-  .date {
-    font-size: 11px;
-    color: var(--hint);
+  .small {
+    font-size: 12px;
   }
   .q {
     font-size: 14px;
-    margin-bottom: 8px;
-    line-height: 1.3;
+    margin-bottom: 10px;
+    line-height: 1.35;
   }
   .bet-line {
     display: flex;
     justify-content: space-between;
-    font-size: 13px;
-    color: var(--hint);
-  }
-  .amt {
-    font-variant-numeric: tabular-nums;
+    font-size: 14px;
   }
   .payout {
-    margin-top: 6px;
-    font-size: 13px;
-  }
-  .payout.win {
-    color: #1e8a47;
-  }
-  .payout.lose {
-    color: var(--destructive);
-  }
-  .hint {
-    color: var(--hint);
-  }
-  .error {
-    color: var(--destructive);
+    margin-top: 8px;
+    font-size: 14px;
+    padding-top: 8px;
+    border-top: 1px solid var(--separator);
   }
 </style>

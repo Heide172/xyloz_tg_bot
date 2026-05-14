@@ -12,6 +12,14 @@ export function getInitData(): string {
 
 export function getChatId(): number | null {
   if (typeof window === 'undefined') return null;
+  // 1) Если открыто через t.me/<bot>?startapp=<chat_id>, chat_id живёт в start_param.
+  const tg = getTg();
+  const startParam = tg?.initDataUnsafe?.start_param;
+  if (startParam) {
+    const n = Number(startParam);
+    if (Number.isFinite(n) && Math.abs(n) > 100) return n;
+  }
+  // 2) Fallback на query param (для прямых ссылок и dev).
   const params = new URLSearchParams(window.location.search);
   const cid = params.get('chat_id');
   return cid ? Number(cid) : null;
