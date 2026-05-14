@@ -6,16 +6,54 @@
   import { haptic } from '$lib/tg';
   import type { BalanceResponse, GameResult } from '$lib/types';
 
-  // Стандартный европейский порядок чисел на колесе
+  // Стандартный европейский порядок чисел на колесе (по часовой стрелке, начиная с 0)
   const WHEEL_ORDER = [
     0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23,
     10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26
   ];
   const RED = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+  const N = WHEEL_ORDER.length;
+  const SEG = 360 / N;
+
+  // Геометрия SVG-колеса
+  const SIZE = 280;
+  const CX = SIZE / 2;
+  const CY = SIZE / 2;
+  const R_OUT = 130;
+  const R_IN = 90;
+  const R_LBL = 110;
 
   function colorOf(n: number): 'red' | 'black' | 'green' {
     if (n === 0) return 'green';
     return RED.has(n) ? 'red' : 'black';
+  }
+
+  function polar(cx: number, cy: number, r: number, deg: number) {
+    const rad = ((deg - 90) * Math.PI) / 180;
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+  }
+
+  function segmentPath(i: number): string {
+    const start = i * SEG;
+    const end = (i + 1) * SEG;
+    const p1 = polar(CX, CY, R_OUT, start);
+    const p2 = polar(CX, CY, R_OUT, end);
+    const p3 = polar(CX, CY, R_IN, end);
+    const p4 = polar(CX, CY, R_IN, start);
+    const large = SEG > 180 ? 1 : 0;
+    return [
+      `M ${p1.x} ${p1.y}`,
+      `A ${R_OUT} ${R_OUT} 0 ${large} 1 ${p2.x} ${p2.y}`,
+      `L ${p3.x} ${p3.y}`,
+      `A ${R_IN} ${R_IN} 0 ${large} 0 ${p4.x} ${p4.y}`,
+      'Z'
+    ].join(' ');
+  }
+
+  function labelPos(i: number) {
+    const mid = i * SEG + SEG / 2;
+    const p = polar(CX, CY, R_LBL, mid);
+    return { x: p.x, y: p.y, rot: mid };
   }
 
   type BetType = 'color' | 'parity' | 'half' | 'dozen' | 'number';
@@ -27,8 +65,8 @@
   let last: GameResult | null = null;
   let err: string | null = null;
 
-  let wheelDeg = 0;
-  let spinning = false;
+  let rotation = 0;
+  let spinDuration = 0;
 
   onMount(async () => {
     try {
@@ -47,24 +85,24 @@
     else if (t === 'number') value = '0';
   }
 
-  function spinTo(spin: number) {
-    const idx = WHEEL_ORDER.indexOf(spin);
-    const segDeg = 360 / WHEEL_ORDER.length;
-    // несколько полных оборотов + позиция (минусом, т.к. крутим колесо против часовой)
-    const target = 360 * 6 + idx * segDeg;
-    wheelDeg = target;
-  }
-
   async function play() {
     if (busy) return;
     err = null;
     busy = true;
-    spinning = true;
     last = null;
     try {
       const r = await api.roulette(amount, betType, value);
-      spinTo(r.details.spin);
-      await new Promise((res) => setTimeout(res, 3300));
+      const idx = WHEEL_ORDER.indexOf(r.details.spin);
+      // Сегмент idx занимает [idx*SEG .. (idx+1)*SEG], центр idx*SEG + SEG/2.
+      // Поинтер указывает на угол 0 (12 часов). Если повернуть колесо
+      // на (360 - center) — центр сегмента окажется напротив поинтера.
+      const center = idx * SEG + SEG / 2;
+      const targetAngle = 360 - center;
+      const currentMod = ((rotation % 360) + 360) % 360;
+      const delta = 360 * 6 + ((targetAngle - currentMod + 360) % 360);
+      spinDuration = 4200;
+      rotation = rotation + delta;
+      await new Promise((res) => setTimeout(res, spinDuration + 100));
       last = r;
       balance = balance && {
         ...balance,
@@ -77,45 +115,85 @@
       haptic('error');
     } finally {
       busy = false;
-      spinning = false;
     }
   }
 
   $: search = typeof window !== 'undefined' ? window.location.search : '';
-  $: segDeg = 360 / WHEEL_ORDER.length;
 </script>
 
 <a class="back" href={`/games${search}`}>← к играм</a>
 <h1 class="h1">Roulette</h1>
 
 {#if balance}
-  <div class="bal muted">Баланс: <strong style="color: var(--text)">{fmtCoins(balance.balance)}</strong></div>
+  <div class="bal muted">
+    Баланс: <strong style="color: var(--text)">{fmtCoins(balance.balance)}</strong>
+  </div>
 {/if}
 
 <section class="card">
   <div class="wheel-stage">
-    <div class="pointer">▼</div>
-    <div
+    <svg
+      width={SIZE}
+      height={SIZE}
+      viewBox="0 0 {SIZE} {SIZE}"
       class="wheel"
-      style="transform: rotate(-{wheelDeg}deg); transition: transform {spinning ? '3.2s' : '0s'} cubic-bezier(.2,.7,.3,1);"
+      style="transform: rotate({rotation}deg); transition: transform {spinDuration}ms cubic-bezier(.17,.62,.18,1);"
     >
+      <!-- Внешнее золотое кольцо -->
+      <circle cx={CX} cy={CY} r={R_OUT + 8} fill="url(#rim)" />
+      <circle cx={CX} cy={CY} r={R_OUT + 3} fill="#0a0a0c" />
+      <defs>
+        <radialGradient id="rim" cx="50%" cy="50%" r="50%">
+          <stop offset="80%" stop-color="#f7d147" />
+          <stop offset="100%" stop-color="#8a6510" />
+        </radialGradient>
+      </defs>
       {#each WHEEL_ORDER as n, i}
         {@const c = colorOf(n)}
-        <div
-          class="seg seg-{c}"
-          style="transform: rotate({i * segDeg}deg) skewY(-{90 - segDeg}deg);"
+        {@const lp = labelPos(i)}
+        <path
+          d={segmentPath(i)}
+          fill={c === 'red' ? '#c1272d' : c === 'black' ? '#1c1c1e' : '#1e8a47'}
+          stroke="#0a0a0c"
+          stroke-width="0.5"
+        />
+        <text
+          x={lp.x}
+          y={lp.y}
+          text-anchor="middle"
+          dominant-baseline="central"
+          fill="white"
+          font-size="11"
+          font-weight="700"
+          transform={`rotate(${lp.rot} ${lp.x} ${lp.y})`}
         >
-          <span style="transform: skewY({90 - segDeg}deg) rotate({segDeg / 2}deg);">{n}</span>
-        </div>
+          {n}
+        </text>
       {/each}
-      <div class="hub"></div>
+      <!-- Центральный диск -->
+      <circle cx={CX} cy={CY} r={R_IN - 4} fill="url(#hub)" stroke="#2a2a2e" stroke-width="2" />
+      <circle cx={CX} cy={CY} r="18" fill="#0a0a0c" />
+      <defs>
+        <radialGradient id="hub" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#3a3a3e" />
+          <stop offset="100%" stop-color="#15151a" />
+        </radialGradient>
+      </defs>
+    </svg>
+    <!-- Шарик-указатель сверху (не вращается) -->
+    <div class="pointer">
+      <svg width="22" height="28" viewBox="0 0 22 28">
+        <path d="M11 28 L0 8 A11 11 0 1 1 22 8 Z" fill="#f0f0f3" stroke="#1a1a1c" stroke-width="1.5" />
+      </svg>
     </div>
   </div>
 
   <div class="typetabs">
-    {#each [['color', 'Цвет'], ['parity', 'Чёт/Нечёт'], ['half', '1-18/19-36'], ['dozen', 'Дюжина'], ['number', 'Номер']] as [t, label]}
-      <button class="tab" class:active={betType === t} on:click={() => setType(t)}>{label}</button>
-    {/each}
+    <button class="tab" class:active={betType === 'color'} on:click={() => setType('color')}>Цвет</button>
+    <button class="tab" class:active={betType === 'parity'} on:click={() => setType('parity')}>Чёт/Нечёт</button>
+    <button class="tab" class:active={betType === 'half'} on:click={() => setType('half')}>1-18/19-36</button>
+    <button class="tab" class:active={betType === 'dozen'} on:click={() => setType('dozen')}>Дюжина</button>
+    <button class="tab" class:active={betType === 'number'} on:click={() => setType('number')}>Номер</button>
   </div>
 
   <div class="valuerow">
@@ -173,59 +251,23 @@
     width: 280px;
     height: 280px;
     margin: 0 auto 18px;
+    filter: drop-shadow(0 6px 20px rgba(0, 0, 0, 0.35));
   }
+  .wheel { display: block; will-change: transform; }
   .pointer {
     position: absolute;
-    top: -4px;
+    top: -6px;
     left: 50%;
     transform: translateX(-50%);
-    color: var(--accent);
-    font-size: 22px;
     z-index: 2;
-    line-height: 1;
-  }
-  .wheel {
-    position: absolute;
-    inset: 0;
-    border-radius: 50%;
-    overflow: hidden;
-    transform-origin: center;
-    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
-  }
-  .seg {
-    position: absolute;
-    width: 50%;
-    height: 50%;
-    top: 0;
-    right: 0;
-    transform-origin: 0% 100%;
-    overflow: hidden;
-  }
-  .seg span {
-    position: absolute;
-    bottom: 8px;
-    right: 30%;
-    transform-origin: center;
-    font-size: 11px;
-    color: white;
-    font-weight: 700;
-    pointer-events: none;
-  }
-  .seg-red   { background: #c1272d; }
-  .seg-black { background: #1a1a1a; }
-  .seg-green { background: #1e8a47; }
-  .hub {
-    position: absolute;
-    top: 50%; left: 50%;
-    width: 40px; height: 40px;
-    background: var(--bg-elev);
-    border: 2px solid var(--accent);
-    border-radius: 50%;
-    transform: translate(-50%, -50%);
+    filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.4));
+    line-height: 0;
   }
 
   .typetabs {
-    display: flex; gap: 5px; flex-wrap: wrap;
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
     margin-bottom: 12px;
   }
   .tab {

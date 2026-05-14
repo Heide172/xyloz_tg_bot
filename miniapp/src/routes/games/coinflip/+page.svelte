@@ -11,8 +11,11 @@
   let pick: 'heads' | 'tails' = 'heads';
   let busy = false;
   let last: GameResult | null = null;
-  let flipping = false;
   let err: string | null = null;
+
+  // Накопительный угол вращения. Reactivity — Svelte ставит transition.
+  let rotation = 0;
+  let spinDuration = 0;
 
   onMount(async () => {
     try {
@@ -26,24 +29,29 @@
     if (busy) return;
     err = null;
     busy = true;
-    flipping = true;
+    last = null;
     try {
-      const result = await api.coinflip(amount, pick);
-      // короткая "анимация" перед показом
-      await new Promise((r) => setTimeout(r, 700));
-      last = result;
+      const r = await api.coinflip(amount, pick);
+      // финальный поворот: 0 — orёл (front), 180 — решка (back)
+      const finalHalf = r.details.result === 'heads' ? 0 : 180;
+      const currentMod = ((rotation % 360) + 360) % 360;
+      // 6 полных оборотов + поправка до целевого положения
+      const delta = 360 * 6 + ((finalHalf - currentMod + 360) % 360);
+      spinDuration = 2200;
+      rotation = rotation + delta;
+      await new Promise((res) => setTimeout(res, spinDuration));
+      last = r;
       balance = balance && {
         ...balance,
-        balance: result.user_balance_after,
-        bank: result.bank_after
+        balance: r.user_balance_after,
+        bank: r.bank_after
       };
-      haptic(result.outcome === 'win' ? 'success' : 'error');
+      haptic(r.outcome === 'win' ? 'success' : 'error');
     } catch (e: any) {
       err = e?.message ?? 'Ошибка';
       haptic('error');
     } finally {
       busy = false;
-      flipping = false;
     }
   }
 
@@ -54,28 +62,37 @@
 <h1 class="h1">Coinflip</h1>
 
 {#if balance}
-  <div class="bal muted">Баланс: <strong style="color: var(--text)">{fmtCoins(balance.balance)}</strong></div>
+  <div class="bal muted">
+    Баланс: <strong style="color: var(--text)">{fmtCoins(balance.balance)}</strong>
+  </div>
 {/if}
 
 <section class="card">
   <div class="coin-stage">
     <div
       class="coin"
-      class:flipping
-      class:heads={!flipping && last && last.details.result === 'heads'}
-      class:tails={!flipping && last && last.details.result === 'tails'}
+      style="transform: rotateY({rotation}deg); transition: transform {spinDuration}ms cubic-bezier(.18,.72,.26,1);"
     >
-      <div class="face front">H</div>
-      <div class="face back">T</div>
+      <div class="face heads">
+        <div class="rim"></div>
+        <div class="emblem">H</div>
+        <div class="label">HEADS</div>
+      </div>
+      <div class="face tails">
+        <div class="rim"></div>
+        <div class="emblem">T</div>
+        <div class="label">TAILS</div>
+      </div>
+      <!-- псевдо-«ребро» через box-shadow на родителе -->
     </div>
   </div>
 
   <div class="pickrow">
-    <button class="pickbtn" class:active={pick === 'heads'} on:click={() => (pick = 'heads')}>
-      Орёл (H)
+    <button class="pickbtn heads-btn" class:active={pick === 'heads'} on:click={() => (pick = 'heads')} disabled={busy}>
+      Орёл (H) · ×1.98
     </button>
-    <button class="pickbtn" class:active={pick === 'tails'} on:click={() => (pick = 'tails')}>
-      Решка (T)
+    <button class="pickbtn tails-btn" class:active={pick === 'tails'} on:click={() => (pick = 'tails')} disabled={busy}>
+      Решка (T) · ×1.98
     </button>
   </div>
 
@@ -84,19 +101,20 @@
   </div>
 
   <button class="play" disabled={busy} on:click={play}>
-    {busy ? 'Бросаем…' : `Поставить ${amount}`}
+    {busy ? 'В воздухе…' : `Бросить ${amount}`}
   </button>
 
   {#if err}
     <div class="danger" style="margin-top: 10px">{err}</div>
   {/if}
 
-  {#if last}
+  {#if last && !busy}
     <div class="result" class:win={last.outcome === 'win'} class:lose={last.outcome === 'lose'}>
+      Выпало <strong>{last.details.result === 'heads' ? 'орёл' : 'решка'}</strong>.
       {#if last.outcome === 'win'}
-        Выпало <strong>{last.details.result}</strong>. Выигрыш +{fmtCoins(last.net)}.
+        Выигрыш +{fmtCoins(last.net)}.
       {:else}
-        Выпало <strong>{last.details.result}</strong>. Проигрыш {fmtCoins(-last.net)}.
+        Проигрыш {fmtCoins(-last.net)}.
       {/if}
     </div>
   {/if}
@@ -117,48 +135,69 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    height: 140px;
-    perspective: 800px;
-    margin-bottom: 18px;
+    height: 180px;
+    perspective: 1000px;
+    margin-bottom: 22px;
   }
   .coin {
-    width: 110px;
-    height: 110px;
+    width: 140px;
+    height: 140px;
     position: relative;
     transform-style: preserve-3d;
-    transition: transform 0.7s cubic-bezier(.2,.7,.3,1);
-  }
-  .coin.flipping {
-    animation: spin 0.7s linear;
-  }
-  .coin.heads {
-    transform: rotateY(0deg);
-  }
-  .coin.tails {
-    transform: rotateY(180deg);
-  }
-  @keyframes spin {
-    from { transform: rotateY(0); }
-    to   { transform: rotateY(1080deg); }
+    will-change: transform;
+    /* объёмный обод */
+    filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.35));
   }
   .face {
     position: absolute;
     inset: 0;
     border-radius: 50%;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    font-size: 48px;
-    font-weight: 700;
-    background: linear-gradient(135deg, #f7d147, #d4a020);
-    color: #5b3e00;
-    box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+    gap: 6px;
+    overflow: hidden;
   }
-  .face.back {
+  .face.heads {
+    background: radial-gradient(circle at 35% 30%, #fde58a 0%, #d4a020 50%, #8a6510 100%);
+    color: #4a2f00;
+    box-shadow:
+      inset -4px -4px 12px rgba(0, 0, 0, 0.35),
+      inset 4px 4px 14px rgba(255, 255, 255, 0.45);
+  }
+  .face.tails {
+    background: radial-gradient(circle at 35% 30%, #f0f0f3 0%, #b5b8bf 50%, #6a6d75 100%);
+    color: #1f2024;
+    box-shadow:
+      inset -4px -4px 12px rgba(0, 0, 0, 0.35),
+      inset 4px 4px 14px rgba(255, 255, 255, 0.55);
     transform: rotateY(180deg);
-    background: linear-gradient(135deg, #d3d6db, #8a8d93);
-    color: #2f3033;
   }
+  .rim {
+    position: absolute;
+    inset: 4px;
+    border-radius: 50%;
+    border: 2px dashed rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+  }
+  .emblem {
+    font-size: 56px;
+    font-weight: 900;
+    font-family: 'Times New Roman', serif;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5), 0 -1px 0 rgba(0, 0, 0, 0.3);
+  }
+  .label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    opacity: 0.65;
+  }
+
   .pickrow {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -173,10 +212,19 @@
     border-radius: 10px;
     font-weight: 600;
     cursor: pointer;
+    font-size: 13px;
   }
-  .pickbtn.active {
-    border-color: var(--accent);
-    background: var(--accent-soft);
+  .pickbtn.active.heads-btn {
+    border-color: #d4a020;
+    background: rgba(212, 160, 32, 0.15);
+  }
+  .pickbtn.active.tails-btn {
+    border-color: #8a8d93;
+    background: rgba(138, 141, 147, 0.15);
+  }
+  .pickbtn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
   .bet {
     margin-bottom: 14px;
