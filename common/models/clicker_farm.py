@@ -25,8 +25,15 @@ class ClickerFarm(Base):
     auto_level = Column(Integer, nullable=False, default=0)  # legacy автокликер (rate = auto_level * AUTO_RATE)
     # Работницы фермы: {"cherry": level, "lemon": level, ...}. Уровень 0/нет = не нанята.
     # Пассивный доход = Σ WORKER_RATE[type] * level. Тир арта по уровню.
-    workers = Column(JSONB, nullable=False, default=dict)
+    workers = Column(JSONB, nullable=False, default=dict)  # legacy, мигрируется в гачу
     lifetime_cp = Column(BIGINT, nullable=False, default=0)  # для будущей аналитики/инфляции
+
+    # Гача
+    pity_ssr = Column(Integer, nullable=False, default=0)   # круток без SSR+
+    pity_ur = Column(Integer, nullable=False, default=0)    # круток без UR
+    gacha_rolls = Column(Integer, nullable=False, default=0)
+    active_heroine = Column(String(40), nullable=True)      # char_id выбранной героини
+    gacha_migrated = Column(Integer, nullable=False, default=0)  # 0/1 флаг конвертации workers
 
     last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
