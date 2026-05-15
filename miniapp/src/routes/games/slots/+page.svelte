@@ -234,6 +234,40 @@
     }
   }
 
+  // ---- автоспин ----
+  let autoRunning = false;
+  let autoLeft = 0;
+  let autoInfinite = false;
+
+  async function startAuto(n: number | 'inf') {
+    if (autoRunning || busy) return;
+    autoInfinite = n === 'inf';
+    autoLeft = autoInfinite ? Infinity : (n as number);
+    autoRunning = true;
+    ensureAudio();
+    if (audioCtx?.state === 'suspended') audioCtx.resume();
+    while (autoRunning && autoLeft > 0) {
+      if (!balance || balance.balance < amount) {
+        err = 'Автоспин остановлен: недостаточно баланса';
+        break;
+      }
+      await play();
+      if (!autoRunning) break;
+      autoLeft -= 1;
+      if (autoLeft <= 0) break;
+      await new Promise((res) => setTimeout(res, 650));
+    }
+    autoRunning = false;
+    autoInfinite = false;
+    autoLeft = 0;
+  }
+
+  function stopAuto() {
+    autoRunning = false;
+    autoLeft = 0;
+    autoInfinite = false;
+  }
+
   async function spinReelsQuick(finalGrid: Sym[][]) {
     strips = finalGrid.map((col) => buildStrip(col));
     durations = Array(REELS).fill(0);
@@ -332,24 +366,38 @@
   <div class="paytable">
     <div class="pt-title muted">5 барабанов · 3 ряда · 10 линий · 3+ слева</div>
     <div class="pt-grid">
-      <span><span class="me">💎</span> 18/75/300</span>
-      <span><span class="me">⭐</span> 12/38/135</span>
-      <span><span class="me">🔔</span> 8/21/75</span>
-      <span><span class="me">🍋</span> 3/9/27</span>
-      <span><span class="me">🍒</span> 3/7/21</span>
+      <span><span class="me">💎</span> 15/60/240</span>
+      <span><span class="me">⭐</span> 10/30/108</span>
+      <span><span class="me">🔔</span> 6/17/60</span>
+      <span><span class="me">🍋</span> 2/8/22</span>
+      <span><span class="me">🍒</span> 2/6/17</span>
       <span><span class="me">🃏</span> wild — замена</span>
       <span><span class="me">✨</span> scatter — фриспины</span>
     </div>
-    <div class="muted pt-note">×ставка-на-линию (bet/10) за 3/4/5. 3+ ✨ → 8-15 фриспинов ×2.</div>
+    <div class="muted pt-note">×ставка-на-линию (bet/10) за 3/4/5. 3+ ✨ → 6-12 фриспинов ×2 (≈раз в 18 спинов).</div>
   </div>
 
   <div class="bet">
     <BetInput bind:amount balance={balance?.balance ?? null} disabled={busy} />
   </div>
 
-  <button class="play" disabled={busy} on:click={play}>
-    {busy ? 'Крутим…' : `Spin · ${amount}`}
+  <button class="play" disabled={busy || autoRunning} on:click={play}>
+    {busy && !autoRunning ? 'Крутим…' : `Spin · ${amount}`}
   </button>
+
+  <div class="auto-row">
+    {#if autoRunning}
+      <button class="auto-stop" on:click={stopAuto}>
+        Стоп · авто {autoInfinite ? '∞' : autoLeft}
+      </button>
+    {:else}
+      <span class="auto-label muted">Авто:</span>
+      {#each [10, 25, 50] as n}
+        <button class="auto-btn" disabled={busy} on:click={() => startAuto(n)}>×{n}</button>
+      {/each}
+      <button class="auto-btn" disabled={busy} on:click={() => startAuto('inf')}>∞</button>
+    {/if}
+  </div>
 
   {#if err}
     <div class="danger" style="margin-top: 10px">{err}</div>
@@ -498,4 +546,37 @@
     border: 0; border-radius: 10px; font-weight: 700; font-size: 15px; cursor: pointer;
   }
   .play:disabled { opacity: 0.6; }
+
+  .auto-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .auto-label { font-size: 13px; }
+  .auto-btn {
+    flex: 1;
+    min-width: 48px;
+    padding: 9px;
+    background: var(--bg-elev-2);
+    color: var(--text);
+    border: 0;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .auto-btn:disabled { opacity: 0.5; }
+  .auto-stop {
+    width: 100%;
+    padding: 11px;
+    background: var(--destructive);
+    color: #fff;
+    border: 0;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+  }
 </style>

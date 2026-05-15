@@ -204,9 +204,10 @@ def play_dice_sync(chat_id: int, user_id: int, bet: int, mode: str, threshold: i
 
 # ---------------- SLOTS (5×3, 10 линий, wild + scatter + фриспины) ----------------
 
-# Сетка 5 барабанов × 3 ряда. RTP ~93% (Монте-Карло, см. коммит).
+# Сетка 5 барабанов × 3 ряда. RTP ~94.5% (Монте-Карло 2M, edge 5.5%).
+# scatter weight 4→6: фриспины ~раз в 18 спинов (было ~раз в 50).
 SLOT_SYMBOLS = ["cherry", "lemon", "bell", "star", "diamond", "wild", "scatter"]
-SLOT_WEIGHTS = [27, 24, 20, 13, 8, 4, 4]
+SLOT_WEIGHTS = [26, 24, 20, 13, 7, 4, 6]
 
 # 10 paylines: индекс ряда (0=верх, 1=центр, 2=низ) на каждом из 5 барабанов.
 SLOT_LINES = [
@@ -224,15 +225,15 @@ SLOT_LINES = [
 
 # Выплата за 3/4/5 одинаковых слева (× ставка-на-линию = bet/10).
 SLOT_PAYTABLE = {
-    "diamond": {3: 18, 4: 75, 5: 300},
-    "star": {3: 12, 4: 38, 5: 135},
-    "bell": {3: 8, 4: 21, 5: 75},
-    "lemon": {3: 3, 4: 9, 5: 27},
-    "cherry": {3: 3, 4: 7, 5: 21},
+    "diamond": {3: 15, 4: 60, 5: 240},
+    "star": {3: 10, 4: 30, 5: 108},
+    "bell": {3: 6, 4: 17, 5: 60},
+    "lemon": {3: 2, 4: 8, 5: 22},
+    "cherry": {3: 2, 4: 6, 5: 17},
 }
 # Scatter платит от ОБЩЕЙ ставки (не от линии), вне зависимости от позиций.
-SLOT_SCATTER_PAY = {3: 3, 4: 12, 5: 44}
-SLOT_FREESPINS = {3: 8, 4: 10, 5: 15}
+SLOT_SCATTER_PAY = {3: 1, 4: 5, 5: 18}
+SLOT_FREESPINS = {3: 6, 4: 8, 5: 12}
 SLOT_FS_MULTIPLIER = 2
 
 
