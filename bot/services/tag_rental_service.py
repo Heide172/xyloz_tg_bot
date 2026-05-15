@@ -226,6 +226,28 @@ def state_sync(user_id: int, chat_id: int) -> dict:
         session.close()
 
 
+def active_title_for_tg(chat_id: int, tg_user_id: int) -> str | None:
+    """Текст активной (не истёкшей) аренды юзера, иначе None.
+    Используется номинант-тегами чтобы вернуть арендный тег при смене."""
+    session = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        r = (
+            session.query(TagRental)
+            .filter(
+                TagRental.chat_id == chat_id,
+                TagRental.tg_user_id == tg_user_id,
+                TagRental.status == "active",
+                TagRental.expires_at > now,
+            )
+            .order_by(TagRental.expires_at.desc())
+            .first()
+        )
+        return r.title if r else None
+    finally:
+        session.close()
+
+
 def expire_due_sync() -> int:
     """Снять Telegram-теги у истёкших аренд. Возвращает кол-во."""
     session = SessionLocal()

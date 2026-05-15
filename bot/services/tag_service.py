@@ -117,9 +117,18 @@ async def assign_nomination_tag(
         try:
             prev_id = int(prev)
             if prev_id != tg_user_id:
-                await clear_title(bot, chat_id, prev_id)
+                # Номинант перетирал арендный тег у prev — вернём его, если
+                # аренда ещё активна; иначе просто снимаем (demote).
+                from services.tag_rental_service import active_title_for_tg
+
+                rented = active_title_for_tg(chat_id, prev_id)
+                if rented:
+                    await set_title(bot, chat_id, prev_id, rented)
+                else:
+                    await clear_title(bot, chat_id, prev_id)
         except ValueError:
             pass
+    # Приоритет всегда у номинанта — перетираем любой тег нового держателя.
     ok = await set_title(bot, chat_id, tg_user_id, title)
     if ok:
         _setting_set(key, str(tg_user_id))

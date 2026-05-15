@@ -37,7 +37,7 @@ CP_PER_HRYVNIA = int(os.getenv("CLICKER_CP_PER_HRYVNIA", "100"))  # базовы
 # Растущий курс: на каждые MINT_RATE_SCALE эмитированных в чате гривен
 # курс +1 cp. Тормозит инфляцию — чем больше нафармили, тем дороже cp.
 MINT_RATE_SCALE = int(os.getenv("CLICKER_MINT_RATE_SCALE", "10000"))
-DAILY_CAP = int(os.getenv("CLICKER_DAILY_CAP", "5000"))         # гривен
+DAILY_CAP = int(os.getenv("CLICKER_DAILY_CAP", "10000"))        # гривен
 OFFLINE_CAP_HOURS = float(os.getenv("CLICKER_OFFLINE_CAP_HOURS", "4"))
 AUTO_RATE = float(os.getenv("CLICKER_AUTO_RATE", "0.5"))         # cp/sec на level
 TAP_UPGRADE_BASE = int(os.getenv("CLICKER_TAP_UPGRADE_BASE", "50"))
