@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BIGINT, Column, DateTime, ForeignKey, Index, Integer, UniqueConstraint
+from sqlalchemy import BIGINT, Column, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 
 from common.db.base import Base

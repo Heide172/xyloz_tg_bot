@@ -91,12 +91,19 @@ def _worker_next_cost(wtype: str, level: int) -> int:
     return int(round(WORKER_BASE_COST[wtype] * (UPGRADE_GROWTH ** level)))
 
 
-def _passive_rate(farm: ClickerFarm) -> float:
-    """cp/сек: работницы + legacy автокликер."""
-    w = _workers_dict(farm)
-    rate = sum(WORKER_RATE[t] * lvl for t, lvl in w.items())
-    rate += farm.auto_level * AUTO_RATE
-    return rate
+def _passive_rate(session, farm: ClickerFarm) -> float:
+    """cp/сек: гача-коллекция (× множитель героини) + legacy автокликер."""
+    from services.gacha_service import farm_multipliers
+
+    passive, _hmult, _h = farm_multipliers(session, farm.user_id, farm.chat_id)
+    return passive + farm.auto_level * AUTO_RATE
+
+
+def _heroine_mult(session, farm: ClickerFarm) -> float:
+    from services.gacha_service import farm_multipliers
+
+    _p, hmult, _h = farm_multipliers(session, farm.user_id, farm.chat_id)
+    return hmult
 
 
 class ClickerError(MarketError):
@@ -130,10 +137,10 @@ def _upgrade_cost(base: int, level: int) -> int:
     return int(round(base * (UPGRADE_GROWTH ** level)))
 
 
-def _accrue_offline(farm: ClickerFarm, now: datetime) -> int:
-    """Накопить оффлайн-доход (работницы + legacy авто) с last_seen_at,
+def _accrue_offline(session, farm: ClickerFarm, now: datetime) -> int:
+    """Накопить оффлайн-доход (гача + legacy авто) с last_seen_at,
     но не более OFFLINE_CAP."""
-    rate = _passive_rate(farm)
+    rate = _passive_rate(session, farm)
     if rate <= 0:
         farm.last_seen_at = now
         return 0
@@ -173,7 +180,7 @@ def _to_state(session, farm: ClickerFarm, bank: ChatBank, user_bal: UserBalance)
         cp_balance=int(farm.cp_balance),
         tap_level=int(farm.tap_level),
         auto_level=int(farm.auto_level),
-        auto_rate_cps=round(_passive_rate(farm), 3),
+        auto_rate_cps=round(_passive_rate(session, farm), 3),
         next_tap_cost=_upgrade_cost(TAP_UPGRADE_BASE, farm.tap_level - 1) if farm.tap_level < MAX_TAP_LEVEL else 0,
         next_auto_cost=_upgrade_cost(AUTO_UPGRADE_BASE, farm.auto_level) if farm.auto_level < MAX_AUTO_LEVEL else 0,
         daily_converted=int(farm.daily_converted),
@@ -206,11 +213,14 @@ def _get_or_create_farm(session, user_id: int, chat_id: int) -> ClickerFarm:
         .with_for_update()
         .first()
     )
-    if row:
-        return row
-    row = ClickerFarm(user_id=user_id, chat_id=chat_id)
-    session.add(row)
-    session.flush()
+    if not row:
+        row = ClickerFarm(user_id=user_id, chat_id=chat_id)
+        session.add(row)
+        session.flush()
+    # Ленивая конвертация старых работниц в гача-коллекцию (один раз).
+    from services.gacha_service import ensure_migrated
+
+    ensure_migrated(session, row)
     return row
 
 
@@ -220,7 +230,7 @@ def get_state_sync(user_id: int, chat_id: int) -> FarmState:
     try:
         now = datetime.utcnow()
         farm = _get_or_create_farm(session, user_id, chat_id)
-        _accrue_offline(farm, now)
+        _accrue_offline(session, farm, now)
         _reset_daily_if_needed(farm, now)
         farm.updated_at = now
         bank = _get_or_create_bank(session, chat_id)
@@ -249,9 +259,9 @@ def tap_sync(user_id: int, chat_id: int, count: int, elapsed_ms: int) -> FarmSta
     try:
         now = datetime.utcnow()
         farm = _get_or_create_farm(session, user_id, chat_id)
-        _accrue_offline(farm, now)
+        _accrue_offline(session, farm, now)
         _reset_daily_if_needed(farm, now)
-        gain = accepted * farm.tap_level
+        gain = int(accepted * farm.tap_level * _heroine_mult(session, farm))
         farm.cp_balance += gain
         farm.lifetime_cp += gain
         farm.updated_at = now
@@ -272,7 +282,7 @@ def upgrade_tap_sync(user_id: int, chat_id: int) -> FarmState:
     try:
         now = datetime.utcnow()
         farm = _get_or_create_farm(session, user_id, chat_id)
-        _accrue_offline(farm, now)
+        _accrue_offline(session, farm, now)
         if farm.tap_level >= MAX_TAP_LEVEL:
             raise InvalidArgument(f"Тап на максимуме (level {MAX_TAP_LEVEL})")
         cost = _upgrade_cost(TAP_UPGRADE_BASE, farm.tap_level - 1)
@@ -298,7 +308,7 @@ def upgrade_auto_sync(user_id: int, chat_id: int) -> FarmState:
     try:
         now = datetime.utcnow()
         farm = _get_or_create_farm(session, user_id, chat_id)
-        _accrue_offline(farm, now)
+        _accrue_offline(session, farm, now)
         if farm.auto_level >= MAX_AUTO_LEVEL:
             raise InvalidArgument(f"Автокликер на максимуме (level {MAX_AUTO_LEVEL})")
         cost = _upgrade_cost(AUTO_UPGRADE_BASE, farm.auto_level)
@@ -327,7 +337,7 @@ def hire_worker_sync(user_id: int, chat_id: int, wtype: str) -> FarmState:
     try:
         now = datetime.utcnow()
         farm = _get_or_create_farm(session, user_id, chat_id)
-        _accrue_offline(farm, now)
+        _accrue_offline(session, farm, now)
         workers = _workers_dict(farm)
         level = workers.get(wtype, 0)
         if level >= MAX_WORKER_LEVEL:
@@ -360,7 +370,7 @@ def convert_sync(user_id: int, chat_id: int, hryvnia_amount: int) -> FarmState:
     try:
         now = datetime.utcnow()
         farm = _get_or_create_farm(session, user_id, chat_id)
-        _accrue_offline(farm, now)
+        _accrue_offline(session, farm, now)
         _reset_daily_if_needed(farm, now)
 
         remaining = DAILY_CAP - farm.daily_converted
