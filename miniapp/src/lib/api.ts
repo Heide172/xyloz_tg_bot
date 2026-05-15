@@ -45,6 +45,13 @@ export const api = {
   balance: () => request<BalanceResponse>('/balance'),
   leaderboard: (limit = 20) => request<{ entries: LeaderboardEntry[] }>(`/leaderboard?limit=${limit}`),
   transactions: (limit = 50) => request<{ items: TxItem[] }>(`/transactions?limit=${limit}`),
+  tagsState: () => request<any>('/tags/state'),
+  tagsRent: (title: string, days: number) =>
+    request<any>('/tags/rent', {
+      method: 'POST',
+      body: JSON.stringify({ title, days })
+    }),
+  tagsCancel: () => request<any>('/tags/cancel', { method: 'POST' }),
   duelList: () => request<any>('/duel/list'),
   duelChallenge: (opponent: string, stake: number) =>
     request<any>('/duel/challenge', {

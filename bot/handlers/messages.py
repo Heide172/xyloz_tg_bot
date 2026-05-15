@@ -372,6 +372,16 @@ async def participant_of_day_handler(msg: types.Message):
     except Exception:
         logger.exception("fag bonus award failed")
 
+    # Авто-тег «пидор дня» победителю (снимаем с вчерашнего держателя)
+    try:
+        from services.tag_service import assign_nomination_tag
+
+        await assign_nomination_tag(
+            msg.bot, msg.chat.id, result.winner_tg_id, "пидор дня", "fag"
+        )
+    except Exception:
+        logger.exception("fag tag assign failed")
+
     await msg.answer(
         "Пидор дня: {who}\n"
         "За день: {day}\n"

@@ -22,6 +22,7 @@ from api.routes import economy as economy_routes
 from api.routes import games as games_routes
 from api.routes import history as history_routes
 from api.routes import duel as duel_routes
+from api.routes import tags as tags_routes
 from api.routes import social as social_routes
 from api.routes import stats as stats_routes
 from api.routes import markets as markets_routes
@@ -64,3 +65,4 @@ app.include_router(history_routes.router, prefix="/api/v1/history", tags=["histo
 app.include_router(stats_routes.router, prefix="/api/v1/stats", tags=["stats"])
 app.include_router(social_routes.router, prefix="/api/v1/social", tags=["social"])
 app.include_router(duel_routes.router, prefix="/api/v1/duel", tags=["duel"])
+app.include_router(tags_routes.router, prefix="/api/v1/tags", tags=["tags"])

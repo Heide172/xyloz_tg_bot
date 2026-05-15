@@ -46,6 +46,17 @@ def _split_chunks(text: str, chunk_size: int = TG_CHUNK) -> list[str]:
     return chunks
 
 
+async def _expire_tag_rentals_job() -> None:
+    import asyncio
+
+    from services.tag_rental_service import expire_due_sync
+
+    try:
+        await asyncio.to_thread(expire_due_sync)
+    except Exception:
+        logger.exception("tag_rentals expire job failed")
+
+
 async def _weekly_digest_job(bot: Bot) -> None:
     chat_ids = find_active_chat_ids(window_days=14)
     logger.info("weekly digest: checking %d active chats", len(chat_ids))
@@ -106,6 +117,13 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         auto_close_expired,
         trigger=IntervalTrigger(minutes=5),
         id="markets_auto_close",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        _expire_tag_rentals_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="tag_rentals_expire",
         coalesce=True,
         max_instances=1,
     )
