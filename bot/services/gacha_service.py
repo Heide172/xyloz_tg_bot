@@ -98,6 +98,9 @@ def _grant(session, user_id: int, chat_id: int, char_id: str) -> dict:
         session.add(GachaCollection(
             user_id=user_id, chat_id=chat_id, char_id=char_id, stars=1, copies=1
         ))
+        # flush, чтобы повторное выпадение того же чара в x10 нашло запись
+        # (иначе второй add → UniqueViolation на commit).
+        session.flush()
         return {"char_id": char_id, "rarity": rarity, "stars": 1, "new": True, "refund": 0}
     row.copies += 1
     if row.stars < 5:
