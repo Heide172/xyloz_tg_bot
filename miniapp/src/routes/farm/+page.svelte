@@ -13,7 +13,6 @@
   // Локальный буфер тапов: посылаем батчами раз в 400мс
   let pendingTaps = 0;
   let lastBatchAt = Date.now();
-  let optimisticCp = 0; // оптимистично прибавляем для UX, синкуем по ответу
 
   // Поплавки "+N" над тапом
   let bursts: { id: number; x: number; y: number; value: number }[] = [];
@@ -25,32 +24,41 @@
   // Анимация: для пульса cherry-girl
   let tapPulse = 0;
 
-  // Тикер: пока state.auto_level > 0, локально показываем как растёт cp
-  let displayCp = 0;
-  let lastTick = Date.now();
-
   let convertOpen = false;
   let upgradesOpen = false;
 
+  // Детерминированный расчёт отображаемого CP:
+  //   displayCp = серверный cp_balance
+  //             + неотправленные тапы (pendingTaps × tap_level)
+  //             + авто-доход с момента последнего синка
+  // Монотонно растёт между синками; при синке сервер уже учёл и тапы,
+  // и авто за elapsed, поэтому скачков назад нет.
+  let lastStateAt = Date.now();
+  let nowTs = Date.now(); // обновляется тикером для реактивности
+
   $: search = typeof window !== 'undefined' ? window.location.search : '';
+  $: autoAccrued = state
+    ? Math.floor(((nowTs - lastStateAt) / 1000) * state.auto_rate_cps)
+    : 0;
+  $: displayCp = state
+    ? state.cp_balance + pendingTaps * state.tap_level + autoAccrued
+    : 0;
   $: maxConvert = state
-    ? Math.min(
-        state.daily_remaining,
-        Math.floor((state.cp_balance + optimisticCp) / state.cp_per_hryvnia),
-        state.bank_balance
+    ? Math.max(
+        0,
+        Math.min(
+          state.daily_remaining,
+          Math.floor(state.cp_balance / state.cp_per_hryvnia),
+          state.bank_balance
+        )
       )
     : 0;
-
-  // Когда state приходит с сервера — он уже учёл offline-доход за elapsed.
-  // Поэтому optimisticCp начинает копиться с нуля.
-  let lastStateAt = Date.now();
 
   onMount(async () => {
     try {
       state = await api.farmState();
       lastStateAt = Date.now();
-      displayCp = state.cp_balance;
-      optimisticCp = 0;
+      nowTs = Date.now();
     } catch (e: any) {
       err = e?.message ?? 'Не удалось загрузить ферму';
     } finally {
@@ -58,21 +66,12 @@
     }
   });
 
-  // Тикер ~10 раз/сек: обновляет displayCp согласно auto_rate_cps + optimistic
   let tickHandle: number | null = null;
   let batchHandle: number | null = null;
   onMount(() => {
     tickHandle = window.setInterval(() => {
-      const now = Date.now();
-      const dt = (now - lastTick) / 1000;
-      lastTick = now;
-      if (state) {
-        displayCp = state.cp_balance + optimisticCp + Math.floor(state.auto_rate_cps * dt * 100) / 100;
-        // Накопительно прибавляем auto доход в локальном optimisticCp
-        optimisticCp += state.auto_rate_cps * dt;
-      }
-    }, 100);
-
+      nowTs = Date.now();
+    }, 200);
     batchHandle = window.setInterval(flushTaps, 400);
     return () => {
       if (tickHandle !== null) clearInterval(tickHandle);
@@ -80,24 +79,29 @@
     };
   });
 
+  function syncState(next: FarmState) {
+    state = next;
+    lastStateAt = Date.now();
+    nowTs = Date.now();
+  }
+
   async function flushTaps() {
-    if (pendingTaps <= 0) return;
-    if (busy) return;
+    if (pendingTaps <= 0 || busy) return;
     const count = pendingTaps;
     const now = Date.now();
     const elapsedMs = Math.max(50, now - lastBatchAt);
-    pendingTaps = 0;
+    // Захватываем count, но pendingTaps НЕ обнуляем в 0 — вычитаем
+    // отправленное. Новые тапы во время запроса останутся в очереди.
+    pendingTaps -= count;
     lastBatchAt = now;
     busy = true;
     try {
       const next = await api.farmTap(count, elapsedMs);
-      state = next;
-      lastStateAt = Date.now();
-      // Сервер уже всё учёл — обнуляем локальную оптимистику.
-      optimisticCp = 0;
-      displayCp = state.cp_balance;
+      syncState(next);
     } catch (e: any) {
       err = e?.message ?? null;
+      // не подтвердилось — вернём тапы в очередь
+      pendingTaps += count;
     } finally {
       busy = false;
     }
@@ -106,7 +110,6 @@
   function tap(event: MouseEvent | TouchEvent) {
     if (!state) return;
     pendingTaps += 1;
-    optimisticCp += state.tap_level;
 
     // Burst анимация на месте клика
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -135,10 +138,7 @@
     if (!state) return;
     await flushTaps();
     try {
-      state = await api.farmUpgradeTap();
-      lastStateAt = Date.now();
-      optimisticCp = 0;
-      displayCp = state.cp_balance;
+      syncState(await api.farmUpgradeTap());
       haptic('success');
     } catch (e: any) {
       showAlert(e?.message ?? 'Не получилось');
@@ -150,10 +150,7 @@
     if (!state) return;
     await flushTaps();
     try {
-      state = await api.farmUpgradeAuto();
-      lastStateAt = Date.now();
-      optimisticCp = 0;
-      displayCp = state.cp_balance;
+      syncState(await api.farmUpgradeAuto());
       haptic('success');
     } catch (e: any) {
       showAlert(e?.message ?? 'Не получилось');
@@ -165,10 +162,7 @@
     if (!state || convertAmount <= 0) return;
     await flushTaps();
     try {
-      state = await api.farmConvert(convertAmount);
-      lastStateAt = Date.now();
-      optimisticCp = 0;
-      displayCp = state.cp_balance;
+      syncState(await api.farmConvert(convertAmount));
       haptic('success');
       showAlert(`+${convertAmount} гривен на баланс`);
     } catch (e: any) {

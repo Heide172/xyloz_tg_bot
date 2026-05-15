@@ -149,11 +149,11 @@
 
   <div class="paytable">
     <div class="pt-title muted">Выплаты (×bet)</div>
-    <div class="pt-row"><span><span class="mini-emoji">💎</span><span class="mini-emoji">💎</span><span class="mini-emoji">💎</span></span><span>50×</span></div>
-    <div class="pt-row"><span><span class="mini-emoji">⭐</span><span class="mini-emoji">⭐</span><span class="mini-emoji">⭐</span></span><span>20×</span></div>
-    <div class="pt-row"><span><span class="mini-emoji">🔔</span><span class="mini-emoji">🔔</span><span class="mini-emoji">🔔</span></span><span>10×</span></div>
-    <div class="pt-row"><span><span class="mini-emoji">🍋</span><span class="mini-emoji">🍋</span><span class="mini-emoji">🍋</span></span><span>4×</span></div>
-    <div class="pt-row"><span><span class="mini-emoji">🍒</span><span class="mini-emoji">🍒</span><span class="mini-emoji">🍒</span></span><span>2×</span></div>
+    <div class="pt-row"><span><span class="mini-emoji">💎</span><span class="mini-emoji">💎</span><span class="mini-emoji">💎</span></span><span>650×</span></div>
+    <div class="pt-row"><span><span class="mini-emoji">⭐</span><span class="mini-emoji">⭐</span><span class="mini-emoji">⭐</span></span><span>85×</span></div>
+    <div class="pt-row"><span><span class="mini-emoji">🔔</span><span class="mini-emoji">🔔</span><span class="mini-emoji">🔔</span></span><span>14×</span></div>
+    <div class="pt-row"><span><span class="mini-emoji">🍋</span><span class="mini-emoji">🍋</span><span class="mini-emoji">🍋</span></span><span>7×</span></div>
+    <div class="pt-row"><span><span class="mini-emoji">🍒</span><span class="mini-emoji">🍒</span><span class="mini-emoji">🍒</span></span><span>4×</span></div>
     <div class="pt-row"><span><span class="mini-emoji">🍒</span><span class="mini-emoji">🍒</span></span><span>возврат ставки</span></div>
   </div>
 

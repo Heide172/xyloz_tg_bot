@@ -207,16 +207,17 @@ def play_dice_sync(chat_id: int, user_id: int, bet: int, mode: str, threshold: i
 # 5 символов с разной частотой (через "виртуальные катушки").
 # В виде paytable: 3 одинаковых = multiplier (включая ставку).
 SLOT_SYMBOLS = ["cherry", "lemon", "bell", "star", "diamond"]
-# Веса символов (чем больше — тем чаще выпадает)
-SLOT_WEIGHTS = [40, 30, 18, 8, 4]
+# Веса символов (чем больше — тем чаще выпадает). Подобраны под RTP ~93%
+# (house edge 7%): см. расчёт в коммите. Раньше RTP был ~60% — слишком жадно.
+SLOT_WEIGHTS = [32, 28, 22, 12, 6]
 SLOT_PAYTABLE = {
-    "diamond": 50,
-    "star": 20,
-    "bell": 10,
-    "lemon": 4,
-    "cherry": 2,
+    "diamond": 650,
+    "star": 85,
+    "bell": 14,
+    "lemon": 7,
+    "cherry": 4,
 }
-# При 2 одинаковых cherry — вернуть ставку (1x)
+# При ровно 2 cherry — вернуть ставку (1x)
 SLOT_TWO_CHERRY_MULTIPLIER = 1
 
 
