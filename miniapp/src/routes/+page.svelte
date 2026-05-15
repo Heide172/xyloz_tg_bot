@@ -20,6 +20,7 @@
 
   const baseTiles = [
     { href: '/farm', title: 'Ферма', desc: 'Тапай, копи cp, выводи в гривны' },
+    { href: '/gacha', title: 'Гача', desc: 'Крути девочек, собирай коллекцию' },
     { href: '/markets', title: 'Рынки', desc: 'Открытые ставки' },
     { href: '/games', title: 'Игры', desc: 'Blackjack, slots, дайс, рулетка' },
     { href: '/shop', title: 'Магазин', desc: 'Прожарка, анекдот, пнуть' },

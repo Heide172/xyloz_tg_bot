@@ -40,8 +40,11 @@ class FarmStateResp(BaseModel):
 
 
 class TapReq(BaseModel):
-    count: int = Field(ge=1, le=1000)
-    elapsed_ms: int = Field(ge=1, le=60_000)
+    # elapsed без жёсткого потолка: при сворачивании Telegram-вебвью
+    # таймеры замораживаются и при возврате elapsed огромный — это норма,
+    # сервер всё равно кэпит accepted по MAX_CPS.
+    count: int = Field(ge=1, le=5000)
+    elapsed_ms: int = Field(ge=1)
 
 
 class ConvertReq(BaseModel):

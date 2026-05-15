@@ -45,6 +45,11 @@ export const api = {
   balance: () => request<BalanceResponse>('/balance'),
   leaderboard: (limit = 20) => request<{ entries: LeaderboardEntry[] }>(`/leaderboard?limit=${limit}`),
   transactions: (limit = 50) => request<{ items: TxItem[] }>(`/transactions?limit=${limit}`),
+  gachaCollection: () => request<any>('/gacha/collection'),
+  gachaRoll: (count: number) =>
+    request<any>('/gacha/roll', { method: 'POST', body: JSON.stringify({ count }) }),
+  gachaSetHeroine: (char_id: string) =>
+    request<any>('/gacha/heroine', { method: 'POST', body: JSON.stringify({ char_id }) }),
   tagsState: () => request<any>('/tags/state'),
   tagsRent: (title: string, days: number) =>
     request<any>('/tags/rent', {
