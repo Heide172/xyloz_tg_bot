@@ -37,8 +37,9 @@ X10_COST = int(os.getenv("GACHA_X10_COST", str(ROLL_COST * 9)))  # скидка 
 SSR_PITY = int(os.getenv("GACHA_SSR_PITY", "50"))
 UR_PITY = int(os.getenv("GACHA_UR_PITY", "90"))
 BANNER_RATEUP = float(os.getenv("GACHA_BANNER_RATEUP", "0.5"))  # доля баннерного среди UR
-# базовые веса (без pity)
-BASE_WEIGHTS = {"R": 0.70, "SR": 0.22, "SSR": 0.07, "UR": 0.01}
+# Из ролла исключён R — legacy-работницы (cherry..diamond) остаются
+# отдельной системой (доход по level), гача даёт только SR/SSR/UR поверх.
+BASE_WEIGHTS = {"SR": 0.80, "SSR": 0.18, "UR": 0.02}
 # Возврат гривнами за дубль 5★ (по редкости)
 DUP_REFUND = {"R": 20, "SR": 80, "SSR": 300, "UR": 1500}
 
@@ -118,11 +119,11 @@ def _pick_rarity(farm: ClickerFarm) -> str:
         return "SSR"
     x = _rng.random()
     acc = 0.0
-    for r in ("UR", "SSR", "SR", "R"):
+    for r in ("UR", "SSR", "SR"):
         acc += BASE_WEIGHTS[r]
         if x < acc:
             return r
-    return "R"
+    return "SR"
 
 
 def _pick_char(rarity: str) -> str:
@@ -143,44 +144,28 @@ def _apply_pity_reset(farm: ClickerFarm, rarity: str) -> None:
 
 
 def ensure_migrated(session, farm: ClickerFarm) -> None:
-    """Ленивая конвертация старых workers{type:level} → R-персонажи."""
+    """Legacy-работницы (cherry..diamond в farm.workers) НЕ конвертируются:
+    они продолжают приносить доход по старой формуле rate×level, чтобы
+    прогресс не обнулялся. Гача — отдельный слой SR/SSR/UR поверх.
+    Старые ошибочно созданные R-записи удаляем (иначе двойной счёт)."""
     if farm.gacha_migrated:
         return
-    workers = farm.workers or {}
-    for wtype, lvl in workers.items():
-        try:
-            lvl = int(lvl or 0)
-        except (TypeError, ValueError):
-            lvl = 0
-        if lvl <= 0:
-            continue
-        char_id = LEGACY_WORKER_MAP.get(wtype)
-        if not char_id:
-            continue
-        stars = max(1, min(5, math.ceil(lvl / 10)))
-        existing = (
-            session.query(GachaCollection)
-            .filter(
-                GachaCollection.user_id == farm.user_id,
-                GachaCollection.chat_id == farm.chat_id,
-                GachaCollection.char_id == char_id,
-            )
-            .first()
-        )
-        if existing:
-            existing.stars = max(existing.stars, stars)
-        else:
-            session.add(GachaCollection(
-                user_id=farm.user_id, chat_id=farm.chat_id,
-                char_id=char_id, stars=stars, copies=stars,
-            ))
+    legacy_r = list(LEGACY_WORKER_MAP.values())
+    if legacy_r:
+        session.query(GachaCollection).filter(
+            GachaCollection.user_id == farm.user_id,
+            GachaCollection.chat_id == farm.chat_id,
+            GachaCollection.char_id.in_(legacy_r),
+        ).delete(synchronize_session=False)
     farm.gacha_migrated = 1
 
 
 def farm_multipliers(session, user_id: int, chat_id: int) -> tuple[float, float, str | None]:
-    """(passive_cps, heroine_mult, active_heroine_char_id).
+    """(gacha_worker_raw, heroine_mult, active_heroine_char_id).
 
-    passive_cps = Σ worker base_value × star_mult, * heroine_mult.
+    gacha_worker_raw — Σ base_value × star_mult по SR/SSR/UR-воркерам
+    (БЕЗ R: legacy-работницы считаются отдельно в clicker_service по
+    старой формуле). Множитель героини применяет уже caller.
     """
     rows = (
         session.query(GachaCollection)
@@ -194,7 +179,7 @@ def farm_multipliers(session, user_id: int, chat_id: int) -> tuple[float, float,
     worker_sum = 0.0
     for cid, rec in owned.items():
         c = CATALOG.get(cid)
-        if c and c.role == "worker":
+        if c and c.role == "worker" and c.rarity != "R":
             worker_sum += c.base_value * star_mult(rec.stars)
 
     farm = (
@@ -212,7 +197,7 @@ def farm_multipliers(session, user_id: int, chat_id: int) -> tuple[float, float,
             active = None
     else:
         active = None
-    return worker_sum * heroine_mult, heroine_mult, active
+    return worker_sum, heroine_mult, active
 
 
 # ---------------- public sync ops ----------------

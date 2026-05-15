@@ -33,6 +33,13 @@
     return col?.items?.find((i: any) => i.char_id === id);
   }
 
+  // Пока нет SR/SSR/UR-артов — фолбэк на существующий ассет.
+  const FALLBACK = '/farm/heroine_idle.png';
+  function imgErr(e: Event) {
+    const el = e.target as HTMLImageElement;
+    if (el && el.src.indexOf(FALLBACK) === -1) el.src = FALLBACK;
+  }
+
   async function roll(count: number) {
     if (busy) return;
     busy = true;
@@ -100,7 +107,7 @@
     {#if bannerChar}
       <div class="banner rar-UR">
         <div class="b-tag">★ RATE-UP ★</div>
-        <img src={bannerChar.asset} alt={bannerChar.name} class="b-art" />
+        <img src={bannerChar.asset} alt={bannerChar.name} class="b-art" on:error={imgErr} />
         <div class="b-name">{bannerChar.name} <span class="rb">UR</span></div>
         <div class="muted small">Повышенный шанс в крутке</div>
       </div>
@@ -123,7 +130,7 @@
       <div class="reveal" class:multi={reveal.length > 1}>
         {#each reveal as c (c.char_id + Math.random())}
           <div class="rc rar-{c.rarity}">
-            <img src={c.asset} alt={c.name} />
+            <img src={c.asset} alt={c.name} on:error={imgErr} />
             <div class="rc-rar">{c.rarity}</div>
             <div class="rc-name">{c.name}</div>
             <div class="rc-meta small">
@@ -158,7 +165,7 @@
           role="button"
           tabindex="0"
         >
-          <img src={it.asset} alt={it.name} class:dim={!it.owned} />
+          <img src={it.asset} alt={it.name} class:dim={!it.owned} on:error={imgErr} />
           <div class="c-rar">{it.rarity}</div>
           <div class="c-name">{it.name}</div>
           {#if it.owned}

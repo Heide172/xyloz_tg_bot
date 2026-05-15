@@ -92,11 +92,13 @@ def _worker_next_cost(wtype: str, level: int) -> int:
 
 
 def _passive_rate(session, farm: ClickerFarm) -> float:
-    """cp/сек: гача-коллекция (× множитель героини) + legacy автокликер."""
+    """cp/сек = (legacy-работницы по rate×level + гача SR/SSR/UR воркеры)
+    × множитель активной героини + legacy автокликер."""
     from services.gacha_service import farm_multipliers
 
-    passive, _hmult, _h = farm_multipliers(session, farm.user_id, farm.chat_id)
-    return passive + farm.auto_level * AUTO_RATE
+    legacy = sum(WORKER_RATE[t] * lvl for t, lvl in _workers_dict(farm).items())
+    gacha_raw, hmult, _h = farm_multipliers(session, farm.user_id, farm.chat_id)
+    return (legacy + gacha_raw) * hmult + farm.auto_level * AUTO_RATE
 
 
 def _heroine_mult(session, farm: ClickerFarm) -> float:
