@@ -93,12 +93,9 @@ def _settle_sync(
                 f"Не хватает: у тебя {bal.balance}, нужно {bet}"
             )
         bank = _get_or_create_bank(session, chat_id)
-        # банк должен покрыть net-возможную выплату на любой исход
-        if max_potential_payout > bet and bank.balance < (max_potential_payout - bet):
-            raise InsufficientFunds(
-                f"Банк чата не сможет покрыть выигрыш. В банке {bank.balance}, "
-                f"максимально возможная выплата сверху ставки {max_potential_payout - bet}"
-            )
+        # Выигрыши эмитируются (mint), не из банка — RTP всегда математический,
+        # обрезания нет. Ставки идут в банк (источник номинаций). На дистанции
+        # house edge = ставки в банк минус mint-выигрыши.
 
         # Списать ставку
         bal.balance -= bet
@@ -126,15 +123,9 @@ def _settle_sync(
         _log_tx(session, None, chat_id, bet,
                 kind=f"casino_{game}_bet_to_bank", ref_id=str(cg.id))
 
-        # Выплата
+        # Выплата — эмиссия игроку (не из банка, не обрезается)
         if payout > 0:
-            if bank.balance < payout:
-                # лимитируем (защита, не должно случаться при max_potential_payout проверке)
-                payout = bank.balance
-            bank.balance -= payout
             bal.balance += payout
-            _log_tx(session, None, chat_id, -payout,
-                    kind=f"casino_{game}_payout_from_bank", ref_id=str(cg.id))
             _log_tx(session, user_id, chat_id, payout,
                     kind=f"casino_{game}_payout", ref_id=str(cg.id))
             cg.payout = payout
@@ -451,12 +442,7 @@ def start_blackjack_sync(chat_id: int, user_id: int, bet: int) -> GameResult:
         if bal.balance < bet:
             raise InsufficientFunds(f"Не хватает: {bal.balance}/{bet}")
         bank = _get_or_create_bank(session, chat_id)
-        # blackjack может удвоиться на double => max payout = 2*bet * 2.5 BJ ≈ 5x
-        max_potential = int(bet * 2.5)  # natural BJ pays 2.5x; double would re-check
-        if max_potential > bet and bank.balance < (max_potential - bet):
-            raise InsufficientFunds(
-                f"Банк не покрывает выигрыш. В банке {bank.balance}, нужно ≥ {max_potential - bet}"
-            )
+        # Выигрыши blackjack эмитируются (mint), банк не обязан покрывать.
 
         bal.balance -= bet
         bal.updated_at = datetime.utcnow()
@@ -575,13 +561,9 @@ def _settle_blackjack(session, cg: CasinoGame, bank, bal) -> tuple[str, int]:
         outcome = "lose"
 
     payout = int(bet_used * payout_mult)
-    if payout > bank.balance:
-        payout = bank.balance
     if payout > 0:
-        bank.balance -= payout
+        # Эмиссия игроку (не из банка, не обрезается).
         bal.balance += payout
-        _log_tx(session, None, cg.chat_id, -payout,
-                kind="casino_blackjack_payout_from_bank", ref_id=str(cg.id))
         _log_tx(session, cg.user_id, cg.chat_id, payout,
                 kind="casino_blackjack_payout", ref_id=str(cg.id))
 
