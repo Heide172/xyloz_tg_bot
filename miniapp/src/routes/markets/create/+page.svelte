@@ -6,7 +6,7 @@
   let optsText = '';
   let duration = '7d';
   let busy = false;
-  let createdId: number | null = null;
+  let created: { id: number; fee: number } | null = null;
 
   async function submit() {
     if (busy) return;
@@ -14,14 +14,18 @@
       .split(/\n|,/)
       .map((s) => s.trim())
       .filter(Boolean);
+    if (question.trim().length < 5) {
+      showAlert('Вопрос слишком короткий');
+      return;
+    }
     if (options.length < 2) {
       showAlert('Нужно как минимум 2 варианта');
       return;
     }
     busy = true;
     try {
-      const r = await api.adminMarketCreate({ question: question.trim(), options, duration });
-      createdId = r.market_id;
+      const r = await api.createMarket({ question: question.trim(), options, duration });
+      created = { id: r.market.id, fee: r.fee_charged };
       haptic('success');
     } catch (e: any) {
       showAlert(e?.message ?? 'Ошибка');
@@ -34,10 +38,14 @@
   $: search = typeof window !== 'undefined' ? window.location.search : '';
 </script>
 
-<a class="back" href={`/admin${search}`}>← к админке</a>
+<a class="back" href={`/markets${search}`}>← к рынкам</a>
 <h1 class="h1">Создать рынок</h1>
 
 <section class="card">
+  <div class="muted small note">
+    Любой участник может создать рынок. Комиссия за создание списывается
+    с твоего баланса в банк чата.
+  </div>
   <label class="lbl">
     <span class="muted small">Вопрос</span>
     <input type="text" placeholder="Кто выиграет финал?" bind:value={question} />
@@ -52,12 +60,13 @@
   </label>
 
   <button class="play" disabled={busy} on:click={submit}>
-    {busy ? 'Создаю…' : 'Создать (комиссия 100)'}
+    {busy ? 'Создаю…' : 'Создать рынок'}
   </button>
 
-  {#if createdId !== null}
+  {#if created}
     <div class="result success">
-      Создан рынок #<strong>{createdId}</strong>. Открой <a href={`/markets/${createdId}${search}`}>карточку</a>.
+      Создан рынок #<strong>{created.id}</strong> (комиссия {created.fee}).
+      <a href={`/markets/${created.id}${search}`}>→ открыть</a>
     </div>
   {/if}
 </section>
@@ -65,6 +74,7 @@
 <style>
   .back { display: inline-block; margin-bottom: 8px; font-size: 14px; color: var(--text-muted); }
   .small { font-size: 12px; }
+  .note { margin-bottom: 14px; line-height: 1.45; }
   .lbl { display: block; margin-bottom: 14px; }
   .lbl span { display: block; margin-bottom: 6px; }
   .lbl input, .lbl textarea {

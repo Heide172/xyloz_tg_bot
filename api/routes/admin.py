@@ -18,14 +18,11 @@ from services.economy_service import (
     debit,
     resolve_user_by_username,
 )
-from services.external_markets import EXTERNAL_IMPORT_FEE, import_market
 from services.markets_service import (
     InvalidArgument,
     MarketError,
     MarketNotFound,
     cancel_market,
-    create_market,
-    parse_duration,
     resolve_market,
 )
 
@@ -151,56 +148,8 @@ async def bank_adjust(req: BankAdjustReq, auth: TgWebAppAuth = Depends(require_a
     return BankAdjustResp(new_balance=nb)
 
 
-# ---------------- markets create / import / resolve / cancel ----------------
-
-
-class MarketCreateAdminReq(BaseModel):
-    question: str
-    options: list[str]
-    duration: str  # "7d" / "12h" / "90m"
-
-
-@router.post("/markets/create")
-async def markets_create(req: MarketCreateAdminReq, auth: TgWebAppAuth = Depends(require_auth)):
-    _ensure_admin(auth)
-    chat_id = await require_chat_membership(auth)
-    from api.auth import ensure_db_user
-
-    user_id = ensure_db_user(auth)
-    try:
-        duration = parse_duration(req.duration)
-        created = await asyncio.to_thread(
-            create_market, chat_id, user_id, req.question, req.options, duration
-        )
-    except InvalidArgument as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except InsufficientFunds as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return {
-        "market_id": created.market_id,
-        "fee_charged": created.fee_charged,
-        "options": [{"id": oid, "label": label} for oid, label in created.options],
-    }
-
-
-class MarketImportReq(BaseModel):
-    url: str
-
-
-@router.post("/markets/import")
-async def markets_import(req: MarketImportReq, auth: TgWebAppAuth = Depends(require_auth)):
-    _ensure_admin(auth)
-    chat_id = await require_chat_membership(auth)
-    from api.auth import ensure_db_user
-
-    user_id = ensure_db_user(auth)
-    try:
-        result = await import_market(chat_id=chat_id, creator_user_id=user_id, url=req.url)
-    except (InvalidArgument, InsufficientFunds) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    return result
+# ---------------- markets resolve / cancel ----------------
+# (создание и импорт рынков — публичные, см. api/routes/markets.py)
 
 
 class MarketResolveReq(BaseModel):

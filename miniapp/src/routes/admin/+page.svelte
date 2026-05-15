@@ -22,8 +22,6 @@
   const items = [
     { href: 'balance', title: 'Баланс юзера', desc: 'Прибавить/списать гривны участнику' },
     { href: 'bank', title: 'Банк чата', desc: 'Корректировать общий банк' },
-    { href: 'markets/create', title: 'Создать рынок', desc: 'Вопрос + варианты + срок' },
-    { href: 'markets/import', title: 'Импорт рынка', desc: 'Polymarket / Manifold' },
     { href: 'markets/manage', title: 'Управление рынками', desc: 'Resolve / Cancel' }
   ];
 </script>

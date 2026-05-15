@@ -27,6 +27,15 @@
 
 <h1 class="h1">Рынки</h1>
 
+<div class="actions">
+  <a class="action" href={`/markets/create${typeof window !== 'undefined' ? window.location.search : ''}`}>
+    + Создать рынок
+  </a>
+  <a class="action" href={`/markets/import${typeof window !== 'undefined' ? window.location.search : ''}`}>
+    Импорт
+  </a>
+</div>
+
 <div class="tabs">
   {#each ['open', 'closed', 'resolved', 'all'] as tab}
     <button
@@ -75,6 +84,22 @@
 {/if}
 
 <style>
+  .actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .action {
+    flex: 1;
+    text-align: center;
+    padding: 11px;
+    background: var(--bg-elev);
+    color: var(--text);
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: var(--shadow);
+  }
   .tabs {
     display: flex;
     gap: 6px;
