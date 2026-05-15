@@ -45,6 +45,22 @@ export const api = {
   balance: () => request<BalanceResponse>('/balance'),
   leaderboard: (limit = 20) => request<{ entries: LeaderboardEntry[] }>(`/leaderboard?limit=${limit}`),
   transactions: (limit = 50) => request<{ items: TxItem[] }>(`/transactions?limit=${limit}`),
+  transferQuote: (amount: number) =>
+    request<{ amount: number; fee: number; total: number }>(
+      `/transfer/quote?amount=${amount}`
+    ),
+  transfer: (target: string, amount: number, note: string | null) =>
+    request<{
+      amount: number;
+      fee: number;
+      total: number;
+      sender_balance: number;
+      receiver_balance: number;
+      receiver_username: string | null;
+    }>('/transfer', {
+      method: 'POST',
+      body: JSON.stringify({ target, amount, note })
+    }),
   marketsList: (status: string = 'open') =>
     request<{ items: Market[] }>(`/markets?status=${status}`),
   market: (id: number) => request<Market>(`/markets/${id}`),

@@ -1,4 +1,8 @@
-from fastapi import APIRouter, Depends, Query
+import asyncio
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from api.auth import (
     TgWebAppAuth,
@@ -18,9 +22,86 @@ from api.schemas import (
     UserPublic,
 )
 from api.serializers import user_to_schema
-from services.economy_service import get_balance, get_chat_bank, leaderboard
+from services.economy_service import (
+    InsufficientFunds,
+    get_balance,
+    get_chat_bank,
+    leaderboard,
+    resolve_user_by_username,
+    transfer_fee,
+    transfer_with_fee,
+)
 
 router = APIRouter()
+
+
+class TransferReq(BaseModel):
+    target: str = Field(min_length=1, description="@username или tg_id получателя")
+    amount: int = Field(ge=1)
+    note: str | None = None
+
+
+class TransferResp(BaseModel):
+    amount: int
+    fee: int
+    total: int
+    sender_balance: int
+    receiver_balance: int
+    receiver_username: str | None = None
+
+
+def _resolve_user(target: str):
+    target = target.strip()
+    m = re.match(r"^@?([A-Za-z0-9_]{3,32})$", target)
+    if m:
+        u = resolve_user_by_username(m.group(1))
+        if u is None:
+            raise HTTPException(status_code=404, detail=f"Юзер {target} не найден")
+        return u
+    try:
+        tg_id = int(target)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Укажи @username или tg_id")
+    from common.db.db import SessionLocal
+    from common.models.user import User
+
+    s = SessionLocal()
+    try:
+        u = s.query(User).filter(User.tg_id == tg_id).first()
+        if u is None:
+            raise HTTPException(status_code=404, detail=f"tg_id {tg_id} не найден")
+        return u
+    finally:
+        s.close()
+
+
+@router.get("/transfer/quote")
+async def transfer_quote(
+    amount: int = Query(ge=1), auth: TgWebAppAuth = Depends(require_auth)
+) -> dict:
+    await require_chat_membership(auth)
+    fee = transfer_fee(amount)
+    return {"amount": amount, "fee": fee, "total": amount + fee}
+
+
+@router.post("/transfer", response_model=TransferResp)
+async def do_transfer(
+    req: TransferReq, auth: TgWebAppAuth = Depends(require_auth)
+) -> TransferResp:
+    chat_id = await require_chat_membership(auth)
+    sender_id = ensure_db_user(auth)
+    target = _resolve_user(req.target)
+    if target.id == sender_id:
+        raise HTTPException(status_code=400, detail="Нельзя перевести самому себе")
+    try:
+        r = await asyncio.to_thread(
+            transfer_with_fee, sender_id, target.id, chat_id, req.amount, req.note
+        )
+    except InsufficientFunds as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return TransferResp(**r, receiver_username=target.username)
 
 
 @router.get("/me", response_model=MeResponse)

@@ -22,6 +22,7 @@
     { href: '/farm', title: 'Ферма', desc: 'Тапай, копи cp, выводи в гривны' },
     { href: '/markets', title: 'Рынки', desc: 'Открытые ставки' },
     { href: '/games', title: 'Игры', desc: 'Blackjack, slots, дайс, рулетка' },
+    { href: '/transfer', title: 'Перевод', desc: 'Отправить гривны (комиссия 5%)' },
     { href: '/portfolio', title: 'Портфолио', desc: 'Мои ставки' },
     { href: '/leaderboard', title: 'Топ', desc: 'Лидерборд чата' },
     { href: '/history', title: 'История', desc: 'Лента событий чата' },

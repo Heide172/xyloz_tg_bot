@@ -25,6 +25,15 @@ from common.models.user_balance import UserBalance
 logger = get_logger(__name__)
 
 START_BONUS = int(os.getenv("ECONOMY_START_BONUS", "1000"))
+TRANSFER_FEE_PCT = float(os.getenv("TRANSFER_FEE_PCT", "5"))
+TRANSFER_FEE_MIN = int(os.getenv("TRANSFER_FEE_MIN", "1"))
+
+
+def transfer_fee(amount: int) -> int:
+    """Комиссия за перевод: max(MIN, ceil(amount × PCT%)). Идёт в банк чата."""
+    import math
+
+    return max(TRANSFER_FEE_MIN, math.ceil(amount * TRANSFER_FEE_PCT / 100.0))
 
 
 class InsufficientFunds(Exception):
@@ -166,6 +175,52 @@ def transfer(from_user_id: int, to_user_id: int, chat_id: int, amount: int, kind
         _log_tx(session, to_user_id, chat_id, amount, kind=kind, ref_id=str(from_user_id), note=note)
         session.commit()
         return sender.balance, receiver.balance
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def transfer_with_fee(
+    from_user_id: int, to_user_id: int, chat_id: int, amount: int, note: str | None = None
+) -> dict:
+    """Перевод с комиссией. Отправитель платит amount + fee, получатель
+    получает amount, fee уходит в банк чата. Атомарно."""
+    if amount <= 0:
+        raise ValueError("amount must be positive")
+    if from_user_id == to_user_id:
+        raise ValueError("self-transfer not allowed")
+    fee = transfer_fee(amount)
+    total = amount + fee
+    session = SessionLocal()
+    try:
+        sender = _get_or_create_balance(session, from_user_id, chat_id)
+        if sender.balance < total:
+            raise InsufficientFunds(
+                f"Нужно {total} (перевод {amount} + комиссия {fee}), у тебя {sender.balance}"
+            )
+        receiver = _get_or_create_balance(session, to_user_id, chat_id)
+        bank = _get_or_create_bank(session, chat_id)
+        now = datetime.utcnow()
+        sender.balance -= total
+        receiver.balance += amount
+        bank.balance += fee
+        sender.updated_at = receiver.updated_at = bank.updated_at = now
+        _log_tx(session, from_user_id, chat_id, -total, kind="transfer_out",
+                ref_id=str(to_user_id), note=note)
+        _log_tx(session, to_user_id, chat_id, amount, kind="transfer_in",
+                ref_id=str(from_user_id), note=note)
+        _log_tx(session, None, chat_id, fee, kind="transfer_fee",
+                ref_id=str(from_user_id), note=f"комиссия перевода {amount}")
+        session.commit()
+        return {
+            "amount": amount,
+            "fee": fee,
+            "total": total,
+            "sender_balance": sender.balance,
+            "receiver_balance": receiver.balance,
+        }
     except Exception:
         session.rollback()
         raise
