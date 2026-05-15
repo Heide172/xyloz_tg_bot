@@ -75,6 +75,46 @@ def _resolve_user(target: str):
         s.close()
 
 
+@router.get("/members")
+async def members(
+    q: str = Query(default="", max_length=64),
+    limit: int = Query(default=10, ge=1, le=25),
+    auth: TgWebAppAuth = Depends(require_auth),
+) -> dict:
+    """Поиск участников чата по username/fullname для автокомплита."""
+    chat_id = await require_chat_membership(auth)
+    from common.db.db import SessionLocal
+    from common.models.user import User
+    from common.models.user_balance import UserBalance
+
+    s = SessionLocal()
+    try:
+        query = (
+            s.query(User)
+            .join(UserBalance, UserBalance.user_id == User.id)
+            .filter(UserBalance.chat_id == chat_id)
+        )
+        term = q.strip().lstrip("@")
+        if term:
+            like = f"%{term}%"
+            query = query.filter(
+                (User.username.ilike(like)) | (User.fullname.ilike(like))
+            )
+        rows = query.order_by(UserBalance.balance.desc()).limit(limit).all()
+        return {
+            "items": [
+                {
+                    "tg_id": int(u.tg_id),
+                    "username": u.username,
+                    "fullname": u.fullname,
+                }
+                for u in rows
+            ]
+        }
+    finally:
+        s.close()
+
+
 @router.get("/transfer/quote")
 async def transfer_quote(
     amount: int = Query(ge=1), auth: TgWebAppAuth = Depends(require_auth)

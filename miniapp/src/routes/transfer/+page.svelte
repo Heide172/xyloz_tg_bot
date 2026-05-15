@@ -3,6 +3,7 @@
   import { api } from '$lib/api';
   import { fmtCoins } from '$lib/format';
   import { haptic, showAlert } from '$lib/tg';
+  import UserPicker from '$lib/UserPicker.svelte';
   import type { BalanceResponse, LeaderboardEntry } from '$lib/types';
 
   let balance: BalanceResponse | null = null;
@@ -73,10 +74,10 @@
 {/if}
 
 <section class="card">
-  <label class="lbl">
+  <div class="lbl">
     <span class="muted small">Получатель</span>
-    <input type="text" placeholder="@username или tg_id" bind:value={target} />
-  </label>
+    <UserPicker bind:value={target} placeholder="@username или tg_id" />
+  </div>
 
   {#if people.length}
     <div class="people">

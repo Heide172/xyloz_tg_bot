@@ -45,6 +45,10 @@ export const api = {
   balance: () => request<BalanceResponse>('/balance'),
   leaderboard: (limit = 20) => request<{ entries: LeaderboardEntry[] }>(`/leaderboard?limit=${limit}`),
   transactions: (limit = 50) => request<{ items: TxItem[] }>(`/transactions?limit=${limit}`),
+  members: (q = '') =>
+    request<{ items: { tg_id: number; username: string | null; fullname: string | null }[] }>(
+      `/members?q=${encodeURIComponent(q)}`
+    ),
   transferQuote: (amount: number) =>
     request<{ amount: number; fee: number; total: number }>(
       `/transfer/quote?amount=${amount}`

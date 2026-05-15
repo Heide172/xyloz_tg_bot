@@ -2,6 +2,7 @@
   import { api } from '$lib/api';
   import { fmtCoins } from '$lib/format';
   import { haptic, showAlert } from '$lib/tg';
+  import UserPicker from '$lib/UserPicker.svelte';
 
   let target = '';
   let amount = 100;
@@ -38,10 +39,10 @@
 <h1 class="h1">Баланс юзера</h1>
 
 <section class="card">
-  <label class="lbl">
+  <div class="lbl">
     <span class="muted small">Целевой пользователь</span>
-    <input type="text" placeholder="@username или tg_id" bind:value={target} />
-  </label>
+    <UserPicker bind:value={target} placeholder="@username или tg_id" />
+  </div>
   <label class="lbl">
     <span class="muted small">Сумма (±)</span>
     <input type="number" step="10" bind:value={amount} />
