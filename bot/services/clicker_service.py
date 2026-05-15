@@ -13,6 +13,8 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from typing import Optional
 
+from sqlalchemy import func
+
 from common.db.db import SessionLocal
 from common.logger.logger import get_logger
 from common.models.chat_bank import ChatBank
@@ -31,8 +33,11 @@ from services.markets_service import (
 logger = get_logger(__name__)
 
 # Параметры (env-tunable)
-CP_PER_HRYVNIA = int(os.getenv("CLICKER_CP_PER_HRYVNIA", "100"))
-DAILY_CAP = int(os.getenv("CLICKER_DAILY_CAP", "1000"))         # гривен
+CP_PER_HRYVNIA = int(os.getenv("CLICKER_CP_PER_HRYVNIA", "100"))  # базовый курс
+# Растущий курс: на каждые MINT_RATE_SCALE эмитированных в чате гривен
+# курс +1 cp. Тормозит инфляцию — чем больше нафармили, тем дороже cp.
+MINT_RATE_SCALE = int(os.getenv("CLICKER_MINT_RATE_SCALE", "10000"))
+DAILY_CAP = int(os.getenv("CLICKER_DAILY_CAP", "5000"))         # гривен
 OFFLINE_CAP_HOURS = float(os.getenv("CLICKER_OFFLINE_CAP_HOURS", "4"))
 AUTO_RATE = float(os.getenv("CLICKER_AUTO_RATE", "0.5"))         # cp/sec на level
 TAP_UPGRADE_BASE = int(os.getenv("CLICKER_TAP_UPGRADE_BASE", "50"))
@@ -94,7 +99,22 @@ def _reset_daily_if_needed(farm: ClickerFarm, now: datetime) -> None:
         farm.daily_converted = 0
 
 
-def _to_state(farm: ClickerFarm, bank: ChatBank, user_bal: UserBalance) -> FarmState:
+def _total_minted(session, chat_id: int) -> int:
+    """Сумма всех эмитированных гривен в чате (kind=clicker_mint)."""
+    return int(
+        session.query(func.coalesce(func.sum(EconomyTx.amount), 0))
+        .filter(EconomyTx.chat_id == chat_id, EconomyTx.kind == "clicker_mint")
+        .scalar()
+        or 0
+    )
+
+
+def _current_rate(session, chat_id: int) -> int:
+    """Растущий курс: base + total_minted // scale."""
+    return CP_PER_HRYVNIA + _total_minted(session, chat_id) // MINT_RATE_SCALE
+
+
+def _to_state(session, farm: ClickerFarm, bank: ChatBank, user_bal: UserBalance) -> FarmState:
     return FarmState(
         cp_balance=int(farm.cp_balance),
         tap_level=int(farm.tap_level),
@@ -108,7 +128,7 @@ def _to_state(farm: ClickerFarm, bank: ChatBank, user_bal: UserBalance) -> FarmS
         bank_balance=int(bank.balance),
         user_balance=int(user_bal.balance),
         lifetime_cp=int(farm.lifetime_cp),
-        cp_per_hryvnia=CP_PER_HRYVNIA,
+        cp_per_hryvnia=_current_rate(session, farm.chat_id),
         offline_cap_seconds=int(OFFLINE_CAP_HOURS * 3600),
     )
 
@@ -139,7 +159,7 @@ def get_state_sync(user_id: int, chat_id: int) -> FarmState:
         farm.updated_at = now
         bank = _get_or_create_bank(session, chat_id)
         user_bal = _get_or_create_balance(session, user_id, chat_id)
-        state = _to_state(farm, bank, user_bal)
+        state = _to_state(session, farm, bank, user_bal)
         session.commit()
         return state
     except Exception:
@@ -171,7 +191,7 @@ def tap_sync(user_id: int, chat_id: int, count: int, elapsed_ms: int) -> FarmSta
         farm.updated_at = now
         bank = _get_or_create_bank(session, chat_id)
         user_bal = _get_or_create_balance(session, user_id, chat_id)
-        state = _to_state(farm, bank, user_bal)
+        state = _to_state(session, farm, bank, user_bal)
         session.commit()
         return state
     except Exception:
@@ -197,7 +217,7 @@ def upgrade_tap_sync(user_id: int, chat_id: int) -> FarmState:
         farm.updated_at = now
         bank = _get_or_create_bank(session, chat_id)
         user_bal = _get_or_create_balance(session, user_id, chat_id)
-        state = _to_state(farm, bank, user_bal)
+        state = _to_state(session, farm, bank, user_bal)
         session.commit()
         return state
     except Exception:
@@ -223,7 +243,7 @@ def upgrade_auto_sync(user_id: int, chat_id: int) -> FarmState:
         farm.updated_at = now
         bank = _get_or_create_bank(session, chat_id)
         user_bal = _get_or_create_balance(session, user_id, chat_id)
-        state = _to_state(farm, bank, user_bal)
+        state = _to_state(session, farm, bank, user_bal)
         session.commit()
         return state
     except Exception:
@@ -250,35 +270,27 @@ def convert_sync(user_id: int, chat_id: int, hryvnia_amount: int) -> FarmState:
                 f"Дневной кэп: можешь вывести ещё {remaining} гривен сегодня"
             )
 
-        cp_cost = hryvnia_amount * CP_PER_HRYVNIA
+        rate = _current_rate(session, chat_id)
+        cp_cost = hryvnia_amount * rate
         if farm.cp_balance < cp_cost:
-            raise InsufficientFunds(f"Нужно {cp_cost} cp, у тебя {farm.cp_balance}")
-
-        bank = _get_or_create_bank(session, chat_id)
-        if bank.balance < hryvnia_amount:
             raise InsufficientFunds(
-                f"В банке чата только {bank.balance} гривен. Подожди пока банк пополнится."
+                f"Нужно {cp_cost} cp (курс {rate} cp/гривна), у тебя {farm.cp_balance}"
             )
 
-        # Списания
+        # Эмиссия: гривны создаются (не из банка чата) — приток в экономику.
         farm.cp_balance -= cp_cost
         farm.daily_converted += hryvnia_amount
         farm.updated_at = now
-        bank.balance -= hryvnia_amount
-        bank.updated_at = now
         user_bal = _get_or_create_balance(session, user_id, chat_id)
         user_bal.balance += hryvnia_amount
         user_bal.updated_at = now
+        bank = _get_or_create_bank(session, chat_id)  # только для отображения в стейте
 
-        # Журнал
-        _log_tx(session, None, chat_id, -hryvnia_amount,
-                kind="clicker_convert_from_bank",
-                note=f"clicker -> {hryvnia_amount} hryvnia (cost {cp_cost} cp)")
         _log_tx(session, user_id, chat_id, hryvnia_amount,
-                kind="clicker_convert_to_user",
-                note=f"{cp_cost} cp -> {hryvnia_amount} hryvnia")
+                kind="clicker_mint",
+                note=f"{cp_cost} cp -> {hryvnia_amount} hryvnia (эмиссия)")
 
-        state = _to_state(farm, bank, user_bal)
+        state = _to_state(session, farm, bank, user_bal)
         session.commit()
         return state
     except Exception:

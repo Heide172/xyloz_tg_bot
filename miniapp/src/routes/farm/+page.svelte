@@ -54,8 +54,7 @@
         0,
         Math.min(
           state.daily_remaining,
-          Math.floor(state.cp_balance / state.cp_per_hryvnia),
-          state.bank_balance
+          Math.floor(state.cp_balance / state.cp_per_hryvnia)
         )
       )
     : 0;
@@ -278,9 +277,9 @@
     <summary>Конвертация в гривны</summary>
     <div class="convert">
       <div class="muted small" style="margin-bottom: 8px;">
-        Курс: {state.cp_per_hryvnia} cp → 1 гривна.
+        Курс: {state.cp_per_hryvnia} cp → 1 гривна (растёт с эмиссией чата).
         Лимит: {state.daily_remaining}/{state.daily_cap} в сутки.
-        Банк чата: {fmtCoins(state.bank_balance)} (это потолок).
+        Гривны эмитируются (приток в экономику).
       </div>
       <div class="convert-row">
         <input
