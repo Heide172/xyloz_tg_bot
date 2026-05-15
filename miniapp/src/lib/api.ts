@@ -45,6 +45,23 @@ export const api = {
   balance: () => request<BalanceResponse>('/balance'),
   leaderboard: (limit = 20) => request<{ entries: LeaderboardEntry[] }>(`/leaderboard?limit=${limit}`),
   transactions: (limit = 50) => request<{ items: TxItem[] }>(`/transactions?limit=${limit}`),
+  shopPrices: () =>
+    request<{ poke: number; joke: number; roast: number }>('/social/prices'),
+  shopPoke: (target: string, kind: string) =>
+    request<{ text: string; cost: number; user_balance: number }>('/social/poke', {
+      method: 'POST',
+      body: JSON.stringify({ target, kind })
+    }),
+  shopJoke: (topic: string) =>
+    request<{ text: string; cost: number; user_balance: number }>('/social/joke', {
+      method: 'POST',
+      body: JSON.stringify({ topic })
+    }),
+  shopRoast: (target: string) =>
+    request<{ text: string; cost: number; user_balance: number }>('/social/roast', {
+      method: 'POST',
+      body: JSON.stringify({ target })
+    }),
   stats: () =>
     request<{
       players: {
