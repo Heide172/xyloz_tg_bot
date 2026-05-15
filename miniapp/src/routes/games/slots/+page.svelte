@@ -9,35 +9,27 @@
   const SYMBOLS = ['cherry', 'lemon', 'bell', 'star', 'diamond', 'wild', 'scatter'] as const;
   type Sym = (typeof SYMBOLS)[number];
   const EMOJI: Record<Sym, string> = {
-    cherry: '🍒',
-    lemon: '🍋',
-    bell: '🔔',
-    star: '⭐',
-    diamond: '💎',
-    wild: '🃏',
-    scatter: '✨'
+    cherry: '🍒', lemon: '🍋', bell: '🔔', star: '⭐',
+    diamond: '💎', wild: '🃏', scatter: '✨'
   };
+  const BASE_SYMS: Sym[] = ['cherry', 'lemon', 'bell', 'star', 'diamond'];
 
-  // 10 линий — те же что на сервере (row idx на каждом из 5 барабанов)
   const LINES = [
-    [1, 1, 1, 1, 1],
-    [0, 0, 0, 0, 0],
-    [2, 2, 2, 2, 2],
-    [0, 1, 2, 1, 0],
-    [2, 1, 0, 1, 2],
-    [0, 0, 1, 0, 0],
-    [2, 2, 1, 2, 2],
-    [1, 2, 2, 2, 1],
-    [1, 0, 0, 0, 1],
-    [1, 1, 0, 1, 1]
+    [1, 1, 1, 1, 1], [0, 0, 0, 0, 0], [2, 2, 2, 2, 2],
+    [0, 1, 2, 1, 0], [2, 1, 0, 1, 2],
+    [0, 0, 1, 0, 0], [2, 2, 1, 2, 2],
+    [1, 2, 2, 2, 1], [1, 0, 0, 0, 1], [1, 1, 0, 1, 1]
   ];
   const LINE_COLORS = [
     '#ff5252', '#ffb300', '#2196f3', '#9c27b0', '#00bfa5',
     '#ff7043', '#26c6da', '#ec407a', '#7e57c2', '#66bb6a'
   ];
 
-  const ROWS = 3;
   const REELS = 5;
+  const ROWS = 3;
+  const CELL = 62; // px, фикс — нужно для математики прокрутки
+  const GAP = 4;
+  const STRIP_PAD = 24; // сколько случайных символов прокручиваем перед финалом
 
   let balance: BalanceResponse | null = null;
   let amount = 100;
@@ -49,23 +41,27 @@
     diamond: null, wild: null, scatter: null
   };
 
-  // Текущая отображаемая сетка [reel][row]
-  let grid: Sym[][] = Array.from({ length: REELS }, () =>
-    ['cherry', 'lemon', 'bell'] as Sym[]
+  // Для каждого барабана — длинная лента символов + текущий offset (px) + transition
+  let strips: Sym[][] = Array.from({ length: REELS }, () =>
+    [...BASE_SYMS, ...BASE_SYMS, ...BASE_SYMS]
   );
-  let reelSpinning = Array(REELS).fill(false);
-  let activeLines: number[] = []; // подсвеченные выигрышные линии
-  let winCells = new Set<string>(); // "reel-row" выигравших ячеек
-  let displayWin = 0; // count-up
+  let offsets = Array(REELS).fill(0);
+  let durations = Array(REELS).fill(0);
+
+  let activeLines: number[] = [];
+  let winCells = new Set<string>();
+  let displayWin = 0;
   let bigWin = false;
 
-  // Фриспины
   let fsActive = false;
   let fsTotal = 0;
   let fsIndex = 0;
   let fsWinAccum = 0;
 
-  // Web Audio (ленивая инициализация по первому клику)
+  let gridWrapEl: HTMLDivElement;
+  let linePoints: { color: string; pts: string }[] = [];
+
+  // ---- Web Audio ----
   let audioCtx: AudioContext | null = null;
   function ensureAudio() {
     if (!audioCtx) {
@@ -92,16 +88,12 @@
   }
   function playWinJingle(big: boolean) {
     if (!audioCtx) return;
-    // мажорное арпеджио, для big-win длиннее и выше
-    const base = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
-    base.forEach((f, i) => tone(f, i * 0.09, 0.25));
-    if (big) {
-      [1318.51, 1567.98, 2093.0].forEach((f, i) => tone(f, 0.4 + i * 0.1, 0.35, 0.2));
-    }
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(f, i * 0.09, 0.25));
+    if (big) [1318.51, 1567.98, 2093.0].forEach((f, i) => tone(f, 0.4 + i * 0.1, 0.35, 0.2));
   }
-  function playSpinTick() {
+  function reelStopTick() {
     if (!audioCtx) return;
-    tone(220, 0, 0.05, 0.06, 'square');
+    tone(180, 0, 0.06, 0.07, 'square');
   }
 
   onMount(async () => {
@@ -118,49 +110,86 @@
     }
   });
 
-  function randSym(): Sym {
-    return SYMBOLS[Math.floor(Math.random() * 5)]; // только обычные для "шума"
+  function rnd(): Sym {
+    return BASE_SYMS[Math.floor(Math.random() * BASE_SYMS.length)];
   }
 
-  async function animateReels(finalGrid: Sym[][], winLines: any[]) {
-    reelSpinning = Array(REELS).fill(true);
-    activeLines = [];
-    winCells = new Set();
-    grid = grid.map(() => [randSym(), randSym(), randSym()]);
+  // Строим ленту: [случайный шум...] + [3 финальных символа этого барабана внизу]
+  function buildStrip(finalCol: Sym[]): Sym[] {
+    const noise: Sym[] = [];
+    for (let i = 0; i < STRIP_PAD; i++) noise.push(rnd());
+    return [...noise, ...finalCol]; // длина STRIP_PAD + 3
+  }
 
-    const noise = setInterval(() => {
-      for (let r = 0; r < REELS; r++) {
-        if (reelSpinning[r]) {
-          grid[r] = [randSym(), randSym(), randSym()];
-        }
-      }
-      grid = [...grid];
-    }, 80);
+  // Финальная позиция: показать последние 3 ячейки ленты в окне
+  function finalOffset(strip: Sym[]): number {
+    // окно показывает 3 ячейки; нужно сдвинуть так, чтобы последние 3 были видны
+    const totalH = strip.length * CELL + (strip.length - 1) * GAP;
+    const windowH = ROWS * CELL + (ROWS - 1) * GAP;
+    return totalH - windowH;
+  }
 
-    // последовательная остановка барабанов
+  async function spinReels(finalGrid: Sym[][]) {
+    // подготовить ленты
+    strips = finalGrid.map((col) => buildStrip(col));
+    durations = Array(REELS).fill(0);
+    offsets = Array(REELS).fill(0);
+    await tick();
+    // форс reflow чтобы reset применился до анимации
+    void gridWrapEl?.offsetHeight;
+
+    // запускаем прокрутку всех, останавливаем каскадом
     for (let r = 0; r < REELS; r++) {
-      await new Promise((res) => setTimeout(res, 280));
-      grid[r] = finalGrid[r];
-      reelSpinning[r] = false;
-      reelSpinning = [...reelSpinning];
-      grid = [...grid];
-      playSpinTick();
+      durations[r] = 1400 + r * 320;
+      offsets[r] = finalOffset(strips[r]);
+    }
+    durations = [...durations];
+    offsets = [...offsets];
+
+    // ждать остановки каждого барабана по очереди (для звука/хаптика)
+    for (let r = 0; r < REELS; r++) {
+      const wait = r === 0 ? 1400 : 320;
+      await new Promise((res) => setTimeout(res, wait));
+      reelStopTick();
       haptic('light');
     }
-    clearInterval(noise);
+  }
 
-    // подсветка выигрышных линий
-    if (winLines.length) {
-      activeLines = winLines.map((w) => w.line);
-      const cells = new Set<string>();
-      for (const w of winLines) {
-        const ln = LINES[w.line];
-        for (let r = 0; r < w.count; r++) {
-          cells.add(`${r}-${ln[r]}`);
-        }
-      }
-      winCells = cells;
+  function computeLines(winLines: any[]) {
+    activeLines = winLines.map((w) => w.line);
+    const cells = new Set<string>();
+    for (const w of winLines) {
+      const ln = LINES[w.line];
+      for (let r = 0; r < w.count; r++) cells.add(`${r}-${ln[r]}`);
     }
+    winCells = cells;
+    drawLineOverlay();
+  }
+
+  function drawLineOverlay() {
+    if (!gridWrapEl || activeLines.length === 0) {
+      linePoints = [];
+      return;
+    }
+    const wrapRect = gridWrapEl.getBoundingClientRect();
+    const pts: { color: string; pts: string }[] = [];
+    for (const li of activeLines) {
+      const ln = LINES[li];
+      const coords: string[] = [];
+      for (let reel = 0; reel < REELS; reel++) {
+        const row = ln[reel];
+        const el = gridWrapEl.querySelector(
+          `[data-cell="${reel}-${row}"]`
+        ) as HTMLElement | null;
+        if (!el) continue;
+        const r = el.getBoundingClientRect();
+        const cx = r.left - wrapRect.left + r.width / 2;
+        const cy = r.top - wrapRect.top + r.height / 2;
+        coords.push(`${cx.toFixed(1)},${cy.toFixed(1)}`);
+      }
+      pts.push({ color: LINE_COLORS[li], pts: coords.join(' ') });
+    }
+    linePoints = pts;
   }
 
   async function countUp(target: number) {
@@ -186,13 +215,17 @@
     displayWin = 0;
     bigWin = false;
     fsActive = false;
+    activeLines = [];
+    winCells = new Set();
+    linePoints = [];
 
     try {
       const r = await api.slots(amount);
       const d = r.details;
-      await animateReels(d.grid as Sym[][], (d.win_lines as any[]) ?? []);
+      await spinReels(d.grid as Sym[][]);
+      await new Promise((res) => setTimeout(res, 150)); // дать transition устаканиться
+      computeLines((d.win_lines as any[]) ?? []);
 
-      // Фриспины (если есть)
       const fs = (d.freespins as any[]) ?? [];
       if (fs.length > 0) {
         fsActive = true;
@@ -202,10 +235,14 @@
         await new Promise((res) => setTimeout(res, 900));
         for (let i = 0; i < fs.length; i++) {
           fsIndex = i + 1;
-          await animateReelsQuick(fs[i].grid as Sym[][], fs[i].lines ?? []);
+          activeLines = [];
+          linePoints = [];
+          await spinReelsQuick(fs[i].grid as Sym[][]);
+          await new Promise((res) => setTimeout(res, 120));
+          computeLines(fs[i].lines ?? []);
           fsWinAccum += fs[i].win;
           if (fs[i].win > 0) playWinJingle(false);
-          await new Promise((res) => setTimeout(res, 350));
+          await new Promise((res) => setTimeout(res, 450));
         }
         await new Promise((res) => setTimeout(res, 600));
         fsActive = false;
@@ -217,7 +254,6 @@
         balance: r.user_balance_after,
         bank: r.bank_after
       };
-
       bigWin = r.payout >= amount * 10;
       if (r.outcome === 'win') {
         playWinJingle(bigWin);
@@ -231,35 +267,29 @@
       haptic('error');
     } finally {
       busy = false;
-      reelSpinning = Array(REELS).fill(false);
     }
   }
 
-  // Быстрая версия для фриспинов (без долгой каскадной остановки)
-  async function animateReelsQuick(finalGrid: Sym[][], winLines: any[]) {
-    activeLines = [];
-    winCells = new Set();
-    for (let k = 0; k < 6; k++) {
-      grid = grid.map(() => [randSym(), randSym(), randSym()]);
-      await new Promise((res) => setTimeout(res, 55));
+  async function spinReelsQuick(finalGrid: Sym[][]) {
+    strips = finalGrid.map((col) => buildStrip(col));
+    durations = Array(REELS).fill(0);
+    offsets = Array(REELS).fill(0);
+    await tick();
+    void gridWrapEl?.offsetHeight;
+    for (let r = 0; r < REELS; r++) {
+      durations[r] = 650 + r * 120;
+      offsets[r] = finalOffset(strips[r]);
     }
-    grid = finalGrid.map((c) => [...c]);
-    if (winLines.length) {
-      activeLines = winLines.map((w: any) => w.line);
-      const cells = new Set<string>();
-      for (const w of winLines) {
-        const ln = LINES[w.line];
-        for (let r = 0; r < w.count; r++) cells.add(`${r}-${ln[r]}`);
-      }
-      winCells = cells;
-    }
+    durations = [...durations];
+    offsets = [...offsets];
+    await new Promise((res) => setTimeout(res, 650 + (REELS - 1) * 120 + 80));
   }
 
   $: search = typeof window !== 'undefined' ? window.location.search : '';
-  function cellSym(reel: number, row: number): Sym {
-    return grid[reel]?.[row] ?? 'cherry';
-  }
+  $: windowH = ROWS * CELL + (ROWS - 1) * GAP;
 </script>
+
+<svelte:window on:resize={drawLineOverlay} />
 
 <a class="back" href={`/games${search}`}>← к играм</a>
 <h1 class="h1">Slots</h1>
@@ -280,37 +310,53 @@
       </div>
     {/if}
 
-    <div class="grid-wrap">
-      <div class="grid">
-        {#each Array(REELS) as _, reel}
-          <div class="reel" class:spinning={reelSpinning[reel]}>
-            {#each Array(ROWS) as _, row}
-              {@const s = cellSym(reel, row)}
-              <div class="cell" class:win={winCells.has(`${reel}-${row}`)} class:special={s === 'wild' || s === 'scatter'}>
-                {#if imgOk[s]}
-                  <img src={`/slots/${s}.png`} alt={s} draggable="false" />
-                {:else}
-                  <span class="emoji">{EMOJI[s]}</span>
-                {/if}
-              </div>
-            {/each}
+    <div
+      class="grid-wrap"
+      bind:this={gridWrapEl}
+      style="height: {windowH}px"
+    >
+      <div class="reels" style="gap: {GAP}px">
+        {#each strips as strip, reel}
+          <div class="reel" style="width: {CELL}px; height: {windowH}px">
+            <div
+              class="strip"
+              style="transform: translateY(-{offsets[reel]}px);
+                     transition: transform {durations[reel]}ms cubic-bezier(.15,.45,.2,1);
+                     gap: {GAP}px"
+            >
+              {#each strip as s, idx}
+                {@const isFinal = idx >= strip.length - ROWS}
+                {@const row = idx - (strip.length - ROWS)}
+                <div
+                  class="cell"
+                  data-cell={isFinal ? `${reel}-${row}` : null}
+                  class:win={isFinal && winCells.has(`${reel}-${row}`)}
+                  class:special={s === 'wild' || s === 'scatter'}
+                  style="width: {CELL}px; height: {CELL}px"
+                >
+                  {#if imgOk[s]}
+                    <img src={`/slots/${s}.png`} alt={s} draggable="false" />
+                  {:else}
+                    <span class="emoji">{EMOJI[s]}</span>
+                  {/if}
+                </div>
+              {/each}
+            </div>
           </div>
         {/each}
       </div>
 
-      <!-- Подсветка выигрышных линий -->
-      {#if activeLines.length}
-        <svg class="lines-overlay" viewBox="0 0 100 60" preserveAspectRatio="none">
-          {#each activeLines as li}
+      {#if linePoints.length}
+        <svg class="lines-overlay">
+          {#each linePoints as lp}
             <polyline
-              points={LINES[li]
-                .map((rowIdx, reelIdx) => `${reelIdx * 20 + 10},${rowIdx * 20 + 10}`)
-                .join(' ')}
+              points={lp.pts}
               fill="none"
-              stroke={LINE_COLORS[li]}
-              stroke-width="1.4"
+              stroke={lp.color}
+              stroke-width="3"
               stroke-linejoin="round"
-              opacity="0.85"
+              stroke-linecap="round"
+              opacity="0.9"
             />
           {/each}
         </svg>
@@ -328,7 +374,7 @@
       {#if last.outcome === 'win'}
         {bigWin ? 'BIG WIN! ' : ''}+{fmtCoins(displayWin)}
         {#if last.details.scatter_count >= 3}
-          · {last.details.scatter_count}× scatter → фриспины
+          · {last.details.scatter_count}× scatter
         {/if}
       {:else}
         Не сложилось. −{fmtCoins(-last.net)}.
@@ -347,7 +393,7 @@
       <span><span class="me">🃏</span> wild — замена</span>
       <span><span class="me">✨</span> scatter — фриспины</span>
     </div>
-    <div class="muted pt-note">Выплаты ×ставка-на-линию (bet/10) за 3/4/5. 3+ ✨ → 8-15 фриспинов с ×2.</div>
+    <div class="muted pt-note">×ставка-на-линию (bet/10) за 3/4/5. 3+ ✨ → 8-15 фриспинов ×2.</div>
   </div>
 
   <div class="bet">
@@ -401,46 +447,48 @@
   .fs-title { letter-spacing: 0.08em; }
   .fs-win { font-variant-numeric: tabular-nums; }
 
-  .grid-wrap { position: relative; }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    gap: 4px;
+  .grid-wrap {
+    position: relative;
+    overflow: hidden;
+    border-radius: 8px;
+    margin: 0 auto;
+    width: fit-content;
+  }
+  .reels {
+    display: flex;
   }
   .reel {
-    display: grid;
-    grid-template-rows: repeat(3, 1fr);
-    gap: 4px;
+    overflow: hidden;
+    background: #f7f4ee;
+    border-radius: 7px;
+    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.2);
   }
-  .reel.spinning { filter: blur(0.6px); }
+  .strip {
+    display: flex;
+    flex-direction: column;
+    will-change: transform;
+  }
   .cell {
-    aspect-ratio: 1;
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: #f7f4ee;
-    border-radius: 7px;
     overflow: hidden;
-    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.18);
-    transition: transform 0.12s ease;
   }
   .cell img { width: 100%; height: 100%; object-fit: cover; }
-  .emoji { font-size: 30px; line-height: 1; }
-  .cell.special { box-shadow: inset 0 0 0 2px #f7d147, inset 0 2px 5px rgba(0,0,0,0.18); }
+  .emoji { font-size: 34px; line-height: 1; }
+  .cell.special {
+    box-shadow: inset 0 0 0 3px #f7d147;
+    border-radius: 6px;
+  }
   .cell.win {
     animation: cellpop 0.5s ease-in-out infinite alternate;
-    box-shadow: inset 0 0 0 2px #ffd700, 0 0 10px rgba(255, 215, 0, 0.7);
-    z-index: 1;
+    box-shadow: inset 0 0 0 3px #ffd700, 0 0 12px rgba(255, 215, 0, 0.75);
+    border-radius: 6px;
+    z-index: 2;
   }
   @keyframes cellpop {
-    to { transform: scale(1.08); }
-  }
-  .reel.spinning .cell {
-    animation: reelblur 0.12s linear infinite;
-  }
-  @keyframes reelblur {
-    0% { transform: translateY(-2px); }
-    100% { transform: translateY(2px); }
+    to { transform: scale(1.07); }
   }
   .lines-overlay {
     position: absolute;
@@ -448,6 +496,7 @@
     width: 100%;
     height: 100%;
     pointer-events: none;
+    z-index: 3;
   }
 
   .result {
