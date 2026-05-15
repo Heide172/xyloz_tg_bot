@@ -45,6 +45,28 @@ export const api = {
   balance: () => request<BalanceResponse>('/balance'),
   leaderboard: (limit = 20) => request<{ entries: LeaderboardEntry[] }>(`/leaderboard?limit=${limit}`),
   transactions: (limit = 50) => request<{ items: TxItem[] }>(`/transactions?limit=${limit}`),
+  stats: () =>
+    request<{
+      players: {
+        tg_id: number;
+        username: string | null;
+        fullname: string | null;
+        balance: number;
+        casino_net: number;
+        casino_staked: number;
+        casino_won: number;
+        farm_earned: number;
+        games_played: number;
+      }[];
+      biggest_wins: {
+        username: string | null;
+        fullname: string | null;
+        game: string;
+        bet: number;
+        payout: number;
+        created_at: string;
+      }[];
+    }>('/stats'),
   members: (q = '') =>
     request<{ items: { tg_id: number; username: string | null; fullname: string | null }[] }>(
       `/members?q=${encodeURIComponent(q)}`
