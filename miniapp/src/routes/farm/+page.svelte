@@ -14,6 +14,12 @@
   let pendingTaps = 0;
   let lastBatchAt = Date.now();
 
+  // Клиентский rate-limit, синхронный с серверным (server MAX_CPS=30).
+  // Держим 20/сек — гарантия что сервер примет ВСЕ тапы и баланс не
+  // отскочит назад из-за серверного среза anti-cheat.
+  const CLIENT_TAP_LIMIT = 20;
+  let tapTimes: number[] = [];
+
   // Поплавки "+N" над тапом
   let bursts: { id: number; x: number; y: number; value: number }[] = [];
   let burstId = 0;
@@ -109,6 +115,15 @@
 
   function tap(event: MouseEvent | TouchEvent) {
     if (!state) return;
+
+    // Rolling-window throttle: не больше CLIENT_TAP_LIMIT тапов/сек.
+    // Сверхбыстрые тапы тихо игнорируем (без burst), чтобы сервер
+    // засчитал ровно столько же и баланс не откатывался.
+    const now = Date.now();
+    tapTimes = tapTimes.filter((t) => now - t < 1000);
+    if (tapTimes.length >= CLIENT_TAP_LIMIT) return;
+    tapTimes.push(now);
+
     pendingTaps += 1;
 
     // Burst анимация на месте клика

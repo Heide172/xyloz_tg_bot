@@ -38,7 +38,7 @@ AUTO_RATE = float(os.getenv("CLICKER_AUTO_RATE", "0.5"))         # cp/sec на l
 TAP_UPGRADE_BASE = int(os.getenv("CLICKER_TAP_UPGRADE_BASE", "50"))
 AUTO_UPGRADE_BASE = int(os.getenv("CLICKER_AUTO_UPGRADE_BASE", "200"))
 UPGRADE_GROWTH = float(os.getenv("CLICKER_UPGRADE_GROWTH", "1.15"))
-MAX_CPS = float(os.getenv("CLICKER_MAX_CPS", "25"))               # серверный rate cap
+MAX_CPS = float(os.getenv("CLICKER_MAX_CPS", "30"))               # серверный rate cap (клиент throttle'ит на 20, это буфер)
 MAX_TAP_LEVEL = int(os.getenv("CLICKER_MAX_TAP_LEVEL", "50"))
 MAX_AUTO_LEVEL = int(os.getenv("CLICKER_MAX_AUTO_LEVEL", "100"))
 
