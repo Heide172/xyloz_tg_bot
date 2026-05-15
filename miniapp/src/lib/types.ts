@@ -67,6 +67,17 @@ export interface TxItem {
   created_at: string;
 }
 
+export interface HistoryItem {
+  id: number;
+  created_at: string;
+  user_id: number | null;
+  username: string | null;
+  fullname: string | null;
+  amount: number;
+  kind: string;
+  note: string | null;
+}
+
 export interface FarmState {
   cp_balance: number;
   tap_level: number;

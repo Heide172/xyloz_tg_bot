@@ -3,6 +3,7 @@ import type {
   BalanceResponse,
   FarmState,
   GameResult,
+  HistoryItem,
   LeaderboardEntry,
   Market,
   MeResponse,
@@ -144,5 +145,10 @@ export const api = {
     request<FarmState>('/farm/convert', {
       method: 'POST',
       body: JSON.stringify({ hryvnia_amount: hryvniaAmount })
-    })
+    }),
+
+  history: (limit = 50, offset = 0) =>
+    request<{ items: HistoryItem[]; has_more: boolean }>(
+      `/history?limit=${limit}&offset=${offset}`
+    )
 };

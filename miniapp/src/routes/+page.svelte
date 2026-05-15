@@ -24,6 +24,7 @@
     { href: '/games', title: 'Игры', desc: 'Blackjack, slots, дайс, рулетка' },
     { href: '/portfolio', title: 'Портфолио', desc: 'Мои ставки' },
     { href: '/leaderboard', title: 'Топ', desc: 'Лидерборд чата' },
+    { href: '/history', title: 'История', desc: 'Лента событий чата' },
     { href: '/rules', title: 'Правила', desc: 'Как это работает' }
   ];
   $: tiles = me?.is_admin
