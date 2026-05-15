@@ -45,6 +45,15 @@ export const api = {
   balance: () => request<BalanceResponse>('/balance'),
   leaderboard: (limit = 20) => request<{ entries: LeaderboardEntry[] }>(`/leaderboard?limit=${limit}`),
   transactions: (limit = 50) => request<{ items: TxItem[] }>(`/transactions?limit=${limit}`),
+  duelList: () => request<any>('/duel/list'),
+  duelChallenge: (opponent: string, stake: number) =>
+    request<any>('/duel/challenge', {
+      method: 'POST',
+      body: JSON.stringify({ opponent, stake })
+    }),
+  duelAccept: (id: number) => request<any>(`/duel/${id}/accept`, { method: 'POST' }),
+  duelDecline: (id: number) => request<any>(`/duel/${id}/decline`, { method: 'POST' }),
+  duelCancel: (id: number) => request<any>(`/duel/${id}/cancel`, { method: 'POST' }),
   shopPrices: () =>
     request<{ poke: number; joke: number; roast: number }>('/social/prices'),
   shopPoke: (target: string, kind: string) =>

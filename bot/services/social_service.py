@@ -11,7 +11,6 @@ from datetime import datetime
 
 from common.db.db import SessionLocal
 from common.logger.logger import get_logger
-from services.ai_client import call as ai_call
 from services.markets_service import (
     InsufficientFunds,
     InvalidArgument,
@@ -22,6 +21,15 @@ from services.markets_service import (
 from services.summary_service import get_summary_model
 
 logger = get_logger(__name__)
+
+
+def _ai_call(*args, **kwargs) -> str:
+    """Ленивый импорт ai_client: openai тяжёлый и не нужен пока не вызовут
+    joke/roast. Так API стартует даже без пакета, а poke работает всегда."""
+    from services.ai_client import call as ai_call
+
+    return ai_call(*args, **kwargs)
+
 
 POKE_COST = int(os.getenv("SOCIAL_POKE_COST", "50"))
 JOKE_COST = int(os.getenv("SOCIAL_JOKE_COST", "150"))
@@ -100,7 +108,7 @@ def do_joke(user_id: int, chat_id: int, actor: str, topic: str) -> dict:
         raise InvalidArgument("Тема слишком короткая")
     new_bal = _charge(user_id, chat_id, JOKE_COST, "social_joke", topic)
     try:
-        body = ai_call(
+        body = _ai_call(
             f"Сочини один короткий смешной анекдот на тему: «{topic}». "
             f"Только анекдот, без вступлений и пояснений.",
             get_summary_model(),
@@ -117,7 +125,7 @@ def do_joke(user_id: int, chat_id: int, actor: str, topic: str) -> dict:
 def do_roast(user_id: int, chat_id: int, actor: str, target: str) -> dict:
     new_bal = _charge(user_id, chat_id, ROAST_COST, "social_roast", f"-> {target}")
     try:
-        body = ai_call(
+        body = _ai_call(
             f"Зло, но смешно подколи участника чата {target}. Один абзац, "
             f"дружеский «прожарка»-стиль, без настоящих оскорблений и грубой "
             f"матерщины, по-русски.",

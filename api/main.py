@@ -21,6 +21,7 @@ from api.routes import clicker as clicker_routes
 from api.routes import economy as economy_routes
 from api.routes import games as games_routes
 from api.routes import history as history_routes
+from api.routes import duel as duel_routes
 from api.routes import social as social_routes
 from api.routes import stats as stats_routes
 from api.routes import markets as markets_routes
@@ -62,3 +63,4 @@ app.include_router(clicker_routes.router, prefix="/api/v1/farm", tags=["clicker"
 app.include_router(history_routes.router, prefix="/api/v1/history", tags=["history"])
 app.include_router(stats_routes.router, prefix="/api/v1/stats", tags=["stats"])
 app.include_router(social_routes.router, prefix="/api/v1/social", tags=["social"])
+app.include_router(duel_routes.router, prefix="/api/v1/duel", tags=["duel"])

@@ -23,6 +23,7 @@
     { href: '/markets', title: 'Рынки', desc: 'Открытые ставки' },
     { href: '/games', title: 'Игры', desc: 'Blackjack, slots, дайс, рулетка' },
     { href: '/shop', title: 'Магазин', desc: 'Прожарка, анекдот, пнуть' },
+    { href: '/duel', title: 'Дуэль', desc: '1v1 на гривны' },
     { href: '/transfer', title: 'Перевод', desc: 'Отправить гривны (комиссия 5%)' },
     { href: '/portfolio', title: 'Портфолио', desc: 'Мои ставки' },
     { href: '/leaderboard', title: 'Статистика', desc: 'Баланс, казино, ферма, биг-вины' },
