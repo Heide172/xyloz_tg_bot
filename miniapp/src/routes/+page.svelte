@@ -25,7 +25,13 @@
     { href: '/portfolio', title: 'Портфолио', desc: 'Мои ставки' },
     { href: '/leaderboard', title: 'Топ', desc: 'Лидерборд чата' },
     { href: '/history', title: 'История', desc: 'Лента событий чата' },
-    { href: '/rules', title: 'Правила', desc: 'Как это работает' }
+    { href: '/rules', title: 'Правила', desc: 'Как это работает' },
+    {
+      href: 'https://xn--b1afabzvcegckfhg.xn--p1ai/',
+      title: 'Поддержка по VPN',
+      desc: 'Помощь с доступом',
+      external: true
+    }
   ];
   $: tiles = me?.is_admin
     ? [...baseTiles, { href: '/admin', title: 'Админка', desc: 'Управление' }]
@@ -66,10 +72,17 @@
 
 <section class="tiles">
   {#each tiles as t}
-    <a class="tile" href={t.href + (typeof window !== 'undefined' ? window.location.search : '')}>
-      <span class="tile-title">{t.title}</span>
-      <span class="tile-desc muted">{t.desc}</span>
-    </a>
+    {#if t.external}
+      <a class="tile" href={t.href} target="_blank" rel="noopener noreferrer">
+        <span class="tile-title">{t.title}</span>
+        <span class="tile-desc muted">{t.desc}</span>
+      </a>
+    {:else}
+      <a class="tile" href={t.href + (typeof window !== 'undefined' ? window.location.search : '')}>
+        <span class="tile-title">{t.title}</span>
+        <span class="tile-desc muted">{t.desc}</span>
+      </a>
+    {/if}
   {/each}
 </section>
 

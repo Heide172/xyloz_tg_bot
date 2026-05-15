@@ -202,44 +202,114 @@ def play_dice_sync(chat_id: int, user_id: int, bet: int, mode: str, threshold: i
     return _settle_sync(chat_id, user_id, "dice", bet, outcome, payout, details, max_potential)
 
 
-# ---------------- SLOTS ----------------
+# ---------------- SLOTS (5×3, 10 линий, wild + scatter + фриспины) ----------------
 
-# 5 символов с разной частотой (через "виртуальные катушки").
-# В виде paytable: 3 одинаковых = multiplier (включая ставку).
-SLOT_SYMBOLS = ["cherry", "lemon", "bell", "star", "diamond"]
-# Веса символов (чем больше — тем чаще выпадает). Подобраны под RTP ~93%
-# (house edge 7%): см. расчёт в коммите. Раньше RTP был ~60% — слишком жадно.
-SLOT_WEIGHTS = [32, 28, 22, 12, 6]
+# Сетка 5 барабанов × 3 ряда. RTP ~93% (Монте-Карло, см. коммит).
+SLOT_SYMBOLS = ["cherry", "lemon", "bell", "star", "diamond", "wild", "scatter"]
+SLOT_WEIGHTS = [27, 24, 20, 13, 8, 4, 4]
+
+# 10 paylines: индекс ряда (0=верх, 1=центр, 2=низ) на каждом из 5 барабанов.
+SLOT_LINES = [
+    [1, 1, 1, 1, 1],
+    [0, 0, 0, 0, 0],
+    [2, 2, 2, 2, 2],
+    [0, 1, 2, 1, 0],
+    [2, 1, 0, 1, 2],
+    [0, 0, 1, 0, 0],
+    [2, 2, 1, 2, 2],
+    [1, 2, 2, 2, 1],
+    [1, 0, 0, 0, 1],
+    [1, 1, 0, 1, 1],
+]
+
+# Выплата за 3/4/5 одинаковых слева (× ставка-на-линию = bet/10).
 SLOT_PAYTABLE = {
-    "diamond": 650,
-    "star": 85,
-    "bell": 14,
-    "lemon": 7,
-    "cherry": 4,
+    "diamond": {3: 18, 4: 75, 5: 300},
+    "star": {3: 12, 4: 38, 5: 135},
+    "bell": {3: 8, 4: 21, 5: 75},
+    "lemon": {3: 3, 4: 9, 5: 27},
+    "cherry": {3: 3, 4: 7, 5: 21},
 }
-# При ровно 2 cherry — вернуть ставку (1x)
-SLOT_TWO_CHERRY_MULTIPLIER = 1
+# Scatter платит от ОБЩЕЙ ставки (не от линии), вне зависимости от позиций.
+SLOT_SCATTER_PAY = {3: 3, 4: 12, 5: 44}
+SLOT_FREESPINS = {3: 8, 4: 10, 5: 15}
+SLOT_FS_MULTIPLIER = 2
 
 
-def _spin_reel() -> str:
-    return _rng.choices(SLOT_SYMBOLS, weights=SLOT_WEIGHTS, k=1)[0]
+def _spin_grid() -> list[list[str]]:
+    """5 барабанов × 3 ряда."""
+    return [
+        [_rng.choices(SLOT_SYMBOLS, weights=SLOT_WEIGHTS, k=1)[0] for _ in range(3)]
+        for _ in range(5)
+    ]
+
+
+def _eval_lines(grid: list[list[str]], line_bet: float) -> tuple[int, list[dict]]:
+    """Оценивает 10 линий. Wild подменяет любой символ. Возвращает
+    (суммарная выплата, список выигрышных линий для UI)."""
+    total = 0
+    wins: list[dict] = []
+    for li, line in enumerate(SLOT_LINES):
+        syms = [grid[r][line[r]] for r in range(5)]
+        base = next((s for s in syms if s not in ("wild", "scatter")), None)
+        if base is None:
+            continue
+        cnt = 0
+        for s in syms:
+            if s == base or s == "wild":
+                cnt += 1
+            else:
+                break
+        if cnt >= 3 and base in SLOT_PAYTABLE:
+            pay = int(SLOT_PAYTABLE[base][cnt] * line_bet)
+            total += pay
+            wins.append({"line": li, "symbol": base, "count": cnt, "payout": pay})
+    return total, wins
+
+
+def _count_scatter(grid: list[list[str]]) -> int:
+    return sum(1 for reel in grid for s in reel if s == "scatter")
 
 
 def play_slots_sync(chat_id: int, user_id: int, bet: int) -> GameResult:
     _validate_bet(bet)
-    reels = [_spin_reel() for _ in range(3)]
+    line_bet = bet / 10.0
 
-    multiplier = 0
-    if reels[0] == reels[1] == reels[2]:
-        multiplier = SLOT_PAYTABLE.get(reels[0], 0)
-    elif reels.count("cherry") == 2:
-        multiplier = SLOT_TWO_CHERRY_MULTIPLIER
+    grid = _spin_grid()
+    base_win, win_lines = _eval_lines(grid, line_bet)
+    scatter_count = _count_scatter(grid)
 
-    payout = bet * multiplier
-    outcome = "win" if payout > 0 else "lose"
-    details = {"reels": reels, "multiplier": multiplier}
-    max_potential = bet * max(SLOT_PAYTABLE.values())
-    return _settle_sync(chat_id, user_id, "slots", bet, outcome, payout, details, max_potential)
+    total_payout = base_win
+    scatter_payout = 0
+    freespins: list[dict] = []
+
+    if scatter_count >= 3:
+        sc = min(scatter_count, 5)
+        scatter_payout = SLOT_SCATTER_PAY[sc] * bet
+        total_payout += scatter_payout
+        # Авто-проигрываем фриспины (без решений игрока), множитель ×2.
+        for _ in range(SLOT_FREESPINS[sc]):
+            fg = _spin_grid()
+            fw, fl = _eval_lines(fg, line_bet)
+            fw *= SLOT_FS_MULTIPLIER
+            total_payout += fw
+            freespins.append({"grid": fg, "win": fw, "lines": fl})
+
+    outcome = "win" if total_payout > 0 else "lose"
+    details = {
+        "grid": grid,
+        "win_lines": win_lines,
+        "scatter_count": scatter_count,
+        "scatter_payout": scatter_payout,
+        "freespins": freespins,
+        "base_win": base_win,
+        "fs_multiplier": SLOT_FS_MULTIPLIER,
+    }
+    # Реалистичный порог для проверки «банк не пуст» (теоретический максимум
+    # недостижим и заблокировал бы игру). Если выпадет джекпот больше банка —
+    # _settle_sync сам лимитирует фактическую выплату остатком банка.
+    max_potential = bet * 50
+    return _settle_sync(chat_id, user_id, "slots", bet, outcome, total_payout, details, max_potential)
 
 
 # ---------------- ROULETTE ----------------
