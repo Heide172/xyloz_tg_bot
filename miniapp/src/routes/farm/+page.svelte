@@ -53,10 +53,9 @@
       )
     : 0;
 
-  function heroSrc(): string {
-    const f = heroFrame;
-    return heroImgOk[f] ? `/farm/heroine_${f}.png` : '';
-  }
+  // Реактивно: меняется при смене heroFrame → Svelte перерисует <img>.
+  $: heroSrcUrl = heroImgOk[heroFrame] ? `/farm/heroine_${heroFrame}.png` : '';
+
   function workerArt(w: FarmWorker): string {
     const tier = w.tier > 0 ? w.tier : 1;
     return `/farm/${w.type}_t${tier}.png`;
@@ -229,9 +228,9 @@
     on:touchstart|preventDefault={tap}
     aria-label="Тап по ферме"
   >
-    <div class="hero" class:tapped={heroFrame === 'tap'}>
-      {#if heroImgOk[heroFrame]}
-        <img src={heroSrc()} alt="фермерша" draggable="false" />
+    <div class="hero" class:tapped={heroFrame === 'tap'} class:bonus={heroFrame === 'bonus'}>
+      {#if heroSrcUrl}
+        <img src={heroSrcUrl} alt="фермерша" draggable="false" />
       {:else}
         <span class="hero-fallback">🧑‍🌾</span>
       {/if}
@@ -359,13 +358,12 @@
   .tap-zone {
     position: relative;
     width: 100%;
-    height: 300px;
+    height: 320px;
     display: flex;
     align-items: center;
     justify-content: center;
     background:
-      url('/farm/farm_bg.png') center/cover no-repeat,
-      radial-gradient(circle at 50% 60%, var(--bg-elev), var(--bg));
+      radial-gradient(circle at 50% 38%, #fff7e0 0%, #ffe8c4 38%, #f6cfa0 75%, #e0a878 100%);
     border: 0;
     border-radius: 16px;
     overflow: hidden;
@@ -376,20 +374,56 @@
     box-shadow: var(--shadow);
     padding: 0;
   }
+  /* мягкое солнце-свечение за героиней */
+  .tap-zone::before {
+    content: '';
+    position: absolute;
+    width: 280px;
+    height: 280px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255, 240, 200, 0.9), transparent 70%);
+    filter: blur(8px);
+  }
   .hero {
-    width: 230px;
-    height: 230px;
+    position: relative;
+    width: 250px;
+    height: 250px;
     border-radius: 50%;
     overflow: hidden;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-    transition: transform 0.12s ease;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 4px rgba(255, 255, 255, 0.5);
     pointer-events: none;
-    background: rgba(255, 255, 255, 0.25);
+    background: #fff;
+    animation: hero-idle 2.6s ease-in-out infinite;
+    transform-origin: center bottom;
   }
-  .hero img { width: 100%; height: 100%; object-fit: cover; }
-  .hero-fallback { font-size: 90px; }
-  .tap-zone:active .hero,
-  .hero.tapped { transform: scale(0.93) rotate(-2deg); }
+  .hero img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center top;
+  }
+  .hero-fallback { font-size: 96px; }
+  /* лёгкое покачивание в простое */
+  @keyframes hero-idle {
+    0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+    50% { transform: translateY(-6px) rotate(1.5deg); }
+  }
+  .hero.tapped {
+    animation: hero-tap 0.22s ease-out;
+  }
+  @keyframes hero-tap {
+    0% { transform: scale(1); }
+    40% { transform: scale(0.9) rotate(-3deg); }
+    100% { transform: scale(1.04) rotate(0); }
+  }
+  .hero.bonus {
+    animation: hero-bonus 0.9s ease-in-out;
+  }
+  @keyframes hero-bonus {
+    0%, 100% { transform: scale(1) rotate(0); }
+    25% { transform: scale(1.08) rotate(4deg); }
+    60% { transform: scale(1.08) rotate(-4deg); }
+  }
 
   .burst {
     position: absolute;
