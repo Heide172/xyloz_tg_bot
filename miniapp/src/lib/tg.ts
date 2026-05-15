@@ -10,17 +10,43 @@ export function getInitData(): string {
   return tg?.initData ?? '';
 }
 
+/** start_param: "<chat_id>" или "<chat_id>_<route>" (route = duel, ...). */
+function parseStartParam(): { chatId: number | null; route: string | null } {
+  const sp = getTg()?.initDataUnsafe?.start_param;
+  if (!sp) return { chatId: null, route: null };
+  const m = sp.match(/^(-?\d+)(?:_([a-z]+))?$/);
+  if (!m) {
+    const n = Number(sp);
+    return { chatId: Number.isFinite(n) ? n : null, route: null };
+  }
+  const chatId = Number(m[1]);
+  return {
+    chatId: Number.isFinite(chatId) && Math.abs(chatId) > 100 ? chatId : null,
+    route: m[2] ?? null
+  };
+}
+
 export function getChatId(): number | null {
   if (typeof window === 'undefined') return null;
-  const tg = getTg();
-  const startParam = tg?.initDataUnsafe?.start_param;
-  if (startParam) {
-    const n = Number(startParam);
-    if (Number.isFinite(n) && Math.abs(n) > 100) return n;
-  }
+  const fromStart = parseStartParam().chatId;
+  if (fromStart !== null) return fromStart;
   const params = new URLSearchParams(window.location.search);
   const cid = params.get('chat_id');
   return cid ? Number(cid) : null;
+}
+
+/** Целевой роут из start_param (whitelist), для deep-link в раздел. */
+export function getStartRoute(): string | null {
+  const r = parseStartParam().route;
+  const allowed: Record<string, string> = {
+    duel: '/duel',
+    farm: '/farm',
+    games: '/games',
+    markets: '/markets',
+    shop: '/shop',
+    tags: '/tags'
+  };
+  return r ? allowed[r] ?? null : null;
 }
 
 export function tgReady() {

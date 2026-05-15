@@ -1,7 +1,10 @@
 """PvP-дуэль 1v1. Эскроу ставок, coinflip, комиссия в банк чата."""
+import json
 import math
 import os
 import secrets
+import urllib.parse
+import urllib.request
 from datetime import datetime
 
 from common.db.db import SessionLocal
@@ -23,6 +26,61 @@ _rng = secrets.SystemRandom()
 DUEL_MIN_STAKE = int(os.getenv("DUEL_MIN_STAKE", "10"))
 DUEL_MAX_STAKE = int(os.getenv("DUEL_MAX_STAKE", "100000"))
 DUEL_FEE_PCT = float(os.getenv("DUEL_FEE_PCT", "5"))
+
+_bot_username: str | None = None
+
+
+def _tg_token() -> str:
+    t = (os.getenv("TELEGRAM_TOKEN") or "").strip()
+    if not t:
+        raise RuntimeError("TELEGRAM_TOKEN не задан")
+    return t
+
+
+def _get_bot_username() -> str | None:
+    global _bot_username
+    if _bot_username:
+        return _bot_username
+    try:
+        url = f"https://api.telegram.org/bot{_tg_token()}/getMe"
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+        if body.get("ok"):
+            _bot_username = body["result"]["username"]
+    except Exception:
+        logger.exception("getMe failed")
+    return _bot_username
+
+
+def _announce_challenge(chat_id: int, challenger: str, opponent: str, stake: int) -> None:
+    """Анонс вызова в чат с deep-link кнопкой прямо в /duel."""
+    uname = _get_bot_username()
+    text = (
+        f"⚔️ {challenger} вызывает {opponent} на дуэль!\n"
+        f"Ставка: {stake} гривен. 50/50, победитель забирает банк."
+    )
+    params = {"chat_id": chat_id, "text": text}
+    if uname:
+        startapp = f"{chat_id}_duel"
+        params["reply_markup"] = json.dumps(
+            {
+                "inline_keyboard": [
+                    [{"text": "⚔️ Открыть дуэль", "url": f"https://t.me/{uname}?startapp={startapp}"}]
+                ]
+            }
+        )
+    try:
+        url = f"https://api.telegram.org/bot{_tg_token()}/sendMessage"
+        data = urllib.parse.urlencode(params).encode()
+        req = urllib.request.Request(
+            url, data=data, method="POST", headers={"User-Agent": "xyloz-bot-api/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            b = json.loads(resp.read().decode("utf-8"))
+        if not b.get("ok"):
+            logger.warning("duel announce failed: %s", b)
+    except Exception:
+        logger.exception("duel announce error chat=%s", chat_id)
 
 
 class DuelError(MarketError):
@@ -92,12 +150,15 @@ def challenge_sync(challenger_id: int, chat_id: int, opponent_id: int, stake: in
         _log_tx(session, challenger_id, chat_id, -stake,
                 kind="duel_stake_hold", ref_id=str(d.id))
         session.commit()
-        return _duel_dict(session, d)
+        result = _duel_dict(session, d)
     except Exception:
         session.rollback()
         raise
     finally:
         session.close()
+    # Анонс в чат вне транзакции (deep-link в /duel)
+    _announce_challenge(chat_id, result["challenger"], result["opponent"], stake)
+    return result
 
 
 def _load_pending(session, duel_id: int) -> Duel:

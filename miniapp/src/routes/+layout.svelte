@@ -1,8 +1,9 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { tgReady, getTg } from '$lib/tg';
+  import { tgReady, getTg, getStartRoute } from '$lib/tg';
 
   let chatBound = true;
 
@@ -12,6 +13,12 @@
     const tg = getTg();
     const startParam = tg?.initDataUnsafe?.start_param;
     chatBound = params.has('chat_id') || !!startParam;
+
+    // Deep-link в раздел: если в start_param указан роут — переходим туда.
+    if ($page.route.id === '/') {
+      const r = getStartRoute();
+      if (r) goto(r + window.location.search);
+    }
 
     // Принудительная схема: если Telegram говорит тёмная — добавляем класс
     // на html. Это страхует от случая, когда --tg-theme-text-color совпадает
