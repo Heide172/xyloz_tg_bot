@@ -131,6 +131,8 @@ export const api = {
     }),
   farmUpgradeTap: () => request<FarmState>('/farm/upgrade/tap', { method: 'POST' }),
   farmUpgradeAuto: () => request<FarmState>('/farm/upgrade/auto', { method: 'POST' }),
+  farmHire: (wtype: string) =>
+    request<FarmState>(`/farm/hire/${wtype}`, { method: 'POST' }),
   farmConvert: (hryvniaAmount: number) =>
     request<FarmState>('/farm/convert', {
       method: 'POST',

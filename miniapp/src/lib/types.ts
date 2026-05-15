@@ -93,6 +93,17 @@ export interface FarmState {
   lifetime_cp: number;
   cp_per_hryvnia: number;
   offline_cap_seconds: number;
+  workers: FarmWorker[];
+}
+
+export interface FarmWorker {
+  type: 'cherry' | 'lemon' | 'bell' | 'star' | 'diamond';
+  level: number;
+  tier: number; // 0=не нанята, 1/2/3 — арт-тир
+  rate_cps: number;
+  per_level_cps: number;
+  next_cost: number;
+  max: number;
 }
 
 export interface GameResult {

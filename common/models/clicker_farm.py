@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import BIGINT, Column, DateTime, ForeignKey, Index, Integer, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 
 from common.db.base import Base
 
@@ -21,7 +22,10 @@ class ClickerFarm(Base):
 
     cp_balance = Column(BIGINT, nullable=False, default=0)
     tap_level = Column(Integer, nullable=False, default=1)   # value per tap = tap_level
-    auto_level = Column(Integer, nullable=False, default=0)  # rate cp/sec = auto_level * AUTO_RATE
+    auto_level = Column(Integer, nullable=False, default=0)  # legacy автокликер (rate = auto_level * AUTO_RATE)
+    # Работницы фермы: {"cherry": level, "lemon": level, ...}. Уровень 0/нет = не нанята.
+    # Пассивный доход = Σ WORKER_RATE[type] * level. Тир арта по уровню.
+    workers = Column(JSONB, nullable=False, default=dict)
     lifetime_cp = Column(BIGINT, nullable=False, default=0)  # для будущей аналитики/инфляции
 
     last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)

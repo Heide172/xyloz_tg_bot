@@ -12,6 +12,7 @@ from services.clicker_service import (
     MarketError,
     convert_sync,
     get_state_sync,
+    hire_worker_sync,
     tap_sync,
     upgrade_auto_sync,
     upgrade_tap_sync,
@@ -35,6 +36,7 @@ class FarmStateResp(BaseModel):
     lifetime_cp: int
     cp_per_hryvnia: int
     offline_cap_seconds: int
+    workers: list = []
 
 
 class TapReq(BaseModel):
@@ -95,6 +97,17 @@ async def upgrade_auto(auth: TgWebAppAuth = Depends(require_auth)):
     user_id = ensure_db_user(auth)
     try:
         s = await asyncio.to_thread(upgrade_auto_sync, user_id, chat_id)
+        return FarmStateResp(**s.asdict())
+    except Exception as e:
+        raise _map_err(e)
+
+
+@router.post("/hire/{wtype}", response_model=FarmStateResp)
+async def hire_worker(wtype: str, auth: TgWebAppAuth = Depends(require_auth)):
+    chat_id = await require_chat_membership(auth)
+    user_id = ensure_db_user(auth)
+    try:
+        s = await asyncio.to_thread(hire_worker_sync, user_id, chat_id, wtype)
         return FarmStateResp(**s.asdict())
     except Exception as e:
         raise _map_err(e)
