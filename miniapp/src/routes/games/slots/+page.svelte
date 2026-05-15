@@ -20,10 +20,6 @@
     [0, 0, 1, 0, 0], [2, 2, 1, 2, 2],
     [1, 2, 2, 2, 1], [1, 0, 0, 0, 1], [1, 1, 0, 1, 1]
   ];
-  const LINE_COLORS = [
-    '#ff5252', '#ffb300', '#2196f3', '#9c27b0', '#00bfa5',
-    '#ff7043', '#26c6da', '#ec407a', '#7e57c2', '#66bb6a'
-  ];
 
   const REELS = 5;
   const ROWS = 3;
@@ -48,7 +44,6 @@
   let offsets = Array(REELS).fill(0);
   let durations = Array(REELS).fill(0);
 
-  let activeLines: number[] = [];
   let winCells = new Set<string>();
   let displayWin = 0;
   let bigWin = false;
@@ -59,7 +54,6 @@
   let fsWinAccum = 0;
 
   let gridWrapEl: HTMLDivElement;
-  let linePoints: { color: string; pts: string }[] = [];
 
   // ---- Web Audio ----
   let audioCtx: AudioContext | null = null;
@@ -156,40 +150,13 @@
   }
 
   function computeLines(winLines: any[]) {
-    activeLines = winLines.map((w) => w.line);
+    // Выделяем сами выигрышные ячейки (без линий) — приподнимаем + glow.
     const cells = new Set<string>();
     for (const w of winLines) {
       const ln = LINES[w.line];
       for (let r = 0; r < w.count; r++) cells.add(`${r}-${ln[r]}`);
     }
     winCells = cells;
-    drawLineOverlay();
-  }
-
-  function drawLineOverlay() {
-    if (!gridWrapEl || activeLines.length === 0) {
-      linePoints = [];
-      return;
-    }
-    const wrapRect = gridWrapEl.getBoundingClientRect();
-    const pts: { color: string; pts: string }[] = [];
-    for (const li of activeLines) {
-      const ln = LINES[li];
-      const coords: string[] = [];
-      for (let reel = 0; reel < REELS; reel++) {
-        const row = ln[reel];
-        const el = gridWrapEl.querySelector(
-          `[data-cell="${reel}-${row}"]`
-        ) as HTMLElement | null;
-        if (!el) continue;
-        const r = el.getBoundingClientRect();
-        const cx = r.left - wrapRect.left + r.width / 2;
-        const cy = r.top - wrapRect.top + r.height / 2;
-        coords.push(`${cx.toFixed(1)},${cy.toFixed(1)}`);
-      }
-      pts.push({ color: LINE_COLORS[li], pts: coords.join(' ') });
-    }
-    linePoints = pts;
   }
 
   async function countUp(target: number) {
@@ -215,9 +182,7 @@
     displayWin = 0;
     bigWin = false;
     fsActive = false;
-    activeLines = [];
     winCells = new Set();
-    linePoints = [];
 
     try {
       const r = await api.slots(amount);
@@ -235,8 +200,7 @@
         await new Promise((res) => setTimeout(res, 900));
         for (let i = 0; i < fs.length; i++) {
           fsIndex = i + 1;
-          activeLines = [];
-          linePoints = [];
+          winCells = new Set();
           await spinReelsQuick(fs[i].grid as Sym[][]);
           await new Promise((res) => setTimeout(res, 120));
           computeLines(fs[i].lines ?? []);
@@ -289,8 +253,6 @@
   $: windowH = ROWS * CELL + (ROWS - 1) * GAP;
 </script>
 
-<svelte:window on:resize={drawLineOverlay} />
-
 <a class="back" href={`/games${search}`}>← к играм</a>
 <h1 class="h1">Slots</h1>
 
@@ -312,6 +274,7 @@
 
     <div
       class="grid-wrap"
+      class:has-wins={winCells.size > 0}
       bind:this={gridWrapEl}
       style="height: {windowH}px"
     >
@@ -345,22 +308,6 @@
           </div>
         {/each}
       </div>
-
-      {#if linePoints.length}
-        <svg class="lines-overlay">
-          {#each linePoints as lp}
-            <polyline
-              points={lp.pts}
-              fill="none"
-              stroke={lp.color}
-              stroke-width="3"
-              stroke-linejoin="round"
-              stroke-linecap="round"
-              opacity="0.9"
-            />
-          {/each}
-        </svg>
-      {/if}
     </div>
   </div>
 
@@ -482,21 +429,29 @@
     border-radius: 6px;
   }
   .cell.win {
-    animation: cellpop 0.5s ease-in-out infinite alternate;
-    box-shadow: inset 0 0 0 3px #ffd700, 0 0 12px rgba(255, 215, 0, 0.75);
-    border-radius: 6px;
+    animation: cellpop 0.7s ease-in-out infinite alternate;
+    border-radius: 8px;
     z-index: 2;
+    position: relative;
   }
+  /* Приподнимаем и подсвечиваем выигрышный блок */
   @keyframes cellpop {
-    to { transform: scale(1.07); }
+    from {
+      transform: translateY(0) scale(1);
+      box-shadow: inset 0 0 0 3px #ffd700, 0 0 10px rgba(255, 215, 0, 0.6);
+    }
+    to {
+      transform: translateY(-7px) scale(1.13);
+      box-shadow:
+        inset 0 0 0 3px #fff3a0,
+        0 0 22px rgba(255, 215, 0, 0.95),
+        0 10px 16px rgba(0, 0, 0, 0.45);
+    }
   }
-  .lines-overlay {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    z-index: 3;
+  /* Затемняем НЕ выигрышные ячейки чтобы выигрышные выделялись */
+  .grid-wrap.has-wins .cell:not(.win) {
+    filter: brightness(0.42) saturate(0.7);
+    transition: filter 0.25s ease;
   }
 
   .result {
