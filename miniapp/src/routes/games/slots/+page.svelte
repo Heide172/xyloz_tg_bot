@@ -366,15 +366,15 @@
   <div class="paytable">
     <div class="pt-title muted">5 барабанов · 3 ряда · 10 линий · 3+ слева</div>
     <div class="pt-grid">
-      <span><span class="me">💎</span> 15/60/240</span>
-      <span><span class="me">⭐</span> 10/30/108</span>
-      <span><span class="me">🔔</span> 6/17/60</span>
-      <span><span class="me">🍋</span> 2/8/22</span>
-      <span><span class="me">🍒</span> 2/6/17</span>
+      <span><span class="me">💎</span> 10/27/72</span>
+      <span><span class="me">⭐</span> 9/20/50</span>
+      <span><span class="me">🔔</span> 5/14/36</span>
+      <span><span class="me">🍋</span> 5/11/24</span>
+      <span><span class="me">🍒</span> 4/10/20</span>
       <span><span class="me">🃏</span> wild — замена</span>
       <span><span class="me">✨</span> scatter — фриспины</span>
     </div>
-    <div class="muted pt-note">×ставка-на-линию (bet/10) за 3/4/5. 3+ ✨ → 6-12 фриспинов ×2 (≈раз в 18 спинов).</div>
+    <div class="muted pt-note">×ставка-на-линию (bet/10) за 3/4/5. 3+ ✨ → 4-7 фриспинов ×2 (≈раз в 17 спинов).</div>
   </div>
 
   <div class="bet">
