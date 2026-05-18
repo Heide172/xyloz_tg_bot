@@ -1,11 +1,14 @@
-"""Скачивание видео (TikTok / Instagram Reels / YT Shorts) через yt-dlp.
+"""Скачивание видео (TikTok / Instagram Reels / YT Shorts) через self-host
+cobalt API (обходит датацентр-блоки на своей стороне).
 
 Платная операция: списывает гривны с автора ссылки в банк чата (sink).
 При неудаче скачивания — деньги возвращаются.
 """
+import json
 import os
 import re
 import tempfile
+import urllib.request
 import uuid
 from datetime import datetime
 
@@ -24,6 +27,7 @@ logger = get_logger(__name__)
 MEDIADL_COST = int(os.getenv("MEDIADL_COST", "50"))
 # Telegram Bot API лимит 50 МБ; берём с запасом.
 MAX_BYTES = int(os.getenv("MEDIADL_MAX_MB", "48")) * 1024 * 1024
+COBALT_API = (os.getenv("COBALT_API_URL", "http://cobalt:9000/")).rstrip("/") + "/"
 
 URL_RE = re.compile(
     r"https?://(?:www\.|vm\.|vt\.|m\.)?"
@@ -86,75 +90,81 @@ def refund(user_id: int, chat_id: int) -> None:
         session.close()
 
 
+def _cobalt_resolve(url: str) -> tuple[str | None, str | None]:
+    """Спрашивает cobalt прямую ссылку на медиа. (media_url, error)."""
+    body = json.dumps({"url": url, "videoQuality": "720"}).encode()
+    req = urllib.request.Request(
+        COBALT_API,
+        data=body,
+        method="POST",
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "xyloz-bot/1.0",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        logger.warning("cobalt request failed for %s: %s", url, str(exc)[:200])
+        return None, "Сервис скачивания недоступен."
+    status = data.get("status")
+    if status in ("tunnel", "redirect"):
+        return data.get("url"), None
+    if status == "picker":
+        items = data.get("picker") or []
+        vid = next((i for i in items if i.get("type") == "video"), None)
+        chosen = (vid or (items[0] if items else {})).get("url")
+        if chosen:
+            return chosen, None
+        return None, "Нечего скачивать (пустой ответ)."
+    if status == "local-processing":
+        return None, "Этот ролик требует склейки на клиенте — не поддерживается."
+    err = (data.get("error") or {}).get("code", "")
+    logger.warning("cobalt status=%s err=%s url=%s", status, err, url)
+    if "auth" in str(err) or "private" in str(err):
+        return None, "Видео приватное / требует логина."
+    return None, "Не удалось получить видео (сайт не отдал)."
+
+
 def download_sync(url: str) -> tuple[str | None, str | None]:
-    """Скачивает видео ≤MAX_BYTES. Возвращает (filepath, error).
+    """Резолвит ссылку через cobalt и качает файл ≤MAX_BYTES.
     Вызывать в asyncio.to_thread — операция блокирующая и долгая."""
-    import yt_dlp
+    media_url, err = _cobalt_resolve(url)
+    if err or not media_url:
+        return None, err or "Не удалось получить видео."
 
     tmpdir = tempfile.gettempdir()
-    base = os.path.join(tmpdir, f"mdl_{uuid.uuid4().hex}")
-    opts = {
-        "outtmpl": base + ".%(ext)s",
-        "format": (
-            f"best[ext=mp4][filesize<{MAX_BYTES}]/"
-            f"best[filesize<{MAX_BYTES}]/best[ext=mp4]/best"
-        ),
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-        "max_filesize": MAX_BYTES,
-        "socket_timeout": 30,
-        "retries": 2,
-        # Мобильный UA + альтернативные YouTube-клиенты обходят
-        # "confirm you're not a bot" с серверного IP без cookies.
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
-            )
-        },
-        "extractor_args": {
-            "youtube": {"player_client": ["android", "ios", "mweb", "web"]}
-        },
-    }
-    # Опциональные cookies (Netscape-формат) для YouTube/Instagram.
-    cookies = (os.getenv("MEDIADL_COOKIES_FILE") or "").strip()
-    if cookies and os.path.exists(cookies):
-        opts["cookiefile"] = cookies
+    path = os.path.join(tmpdir, f"mdl_{uuid.uuid4().hex}.mp4")
+    req = urllib.request.Request(
+        media_url, headers={"User-Agent": "xyloz-bot/1.0"}
+    )
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-        # найти реально скачанный файл
-        path = None
-        if info and "requested_downloads" in info and info["requested_downloads"]:
-            path = info["requested_downloads"][0].get("filepath")
-        if not path:
-            for ext in ("mp4", "webm", "mkv", "mov"):
-                cand = f"{base}.{ext}"
-                if os.path.exists(cand):
-                    path = cand
-                    break
-        if not path or not os.path.exists(path):
-            return None, "Не удалось скачать (файл не получен)."
-        size = os.path.getsize(path)
-        if size > MAX_BYTES:
-            os.remove(path)
-            return None, f"Видео слишком большое (>{MAX_BYTES // 1024 // 1024} МБ)."
-        if size == 0:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            total = 0
+            with open(path, "wb") as f:
+                while True:
+                    chunk = resp.read(256 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_BYTES:
+                        f.close()
+                        os.remove(path)
+                        return None, (
+                            f"Видео больше {MAX_BYTES // 1024 // 1024} МБ "
+                            f"(лимит Telegram)."
+                        )
+                    f.write(chunk)
+        if total == 0:
             os.remove(path)
             return None, "Пустой файл."
         return path, None
     except Exception as exc:
-        msg = str(exc)
-        low = msg.lower()
-        logger.warning("yt-dlp failed for %s: %s", url, msg[:200])
-        if "filesize" in low or "max_filesize" in low:
-            return None, "Видео слишком большое для Telegram."
-        if "not a bot" in low or "sign in" in low or "cookies" in low:
-            return None, (
-                "YouTube блокирует скачивание с сервера (бот-проверка). "
-                "TikTok/Instagram Reels качаются — кидай оттуда."
-            )
-        if "private" in low or "login" in low or "unavailable" in low:
-            return None, "Видео приватное или недоступно."
-        return None, "Не удалось скачать (сайт не отдал видео)."
+        logger.warning("media fetch failed for %s: %s", url, str(exc)[:200])
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return None, "Не удалось скачать файл."

@@ -32,6 +32,8 @@ services:
         condition: service_completed_successfully
       nlp:
         condition: service_started
+      cobalt:
+        condition: service_started
 
   nlp:
     build:
@@ -72,6 +74,13 @@ services:
         VITE_API_BASE_URL: ${MINIAPP_API_BASE_URL:-/api/v1}
     ports:
       - "8003:80"
+
+  cobalt:
+    image: ghcr.io/imputnet/cobalt:10
+    restart: unless-stopped
+    environment:
+      API_URL: "http://cobalt:9000/"
+      # внутренний сервис; наружу порт не публикуем
 
 volumes:
   hf_cache:
