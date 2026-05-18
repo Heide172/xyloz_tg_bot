@@ -79,11 +79,22 @@ async def auto_download(msg: types.Message):
         await progress.edit_text(f"{err or 'Не удалось скачать'} (деньги возвращены).")
         return
 
+    # Кто скинул — для подписи (исходное сообщение удалим).
+    u = msg.from_user
+    who = ("@" + u.username) if u and u.username else (
+        (u.first_name or "кто-то") if u else "кто-то"
+    )
     try:
-        await msg.reply_video(
-            FSInputFile(path),
-            caption=f"скачал за {MEDIADL_COST}г · баланс {new_bal}",
+        await msg.bot.send_video(
+            chat_id=msg.chat.id,
+            video=FSInputFile(path),
+            caption=f"📥 от {who} · −{MEDIADL_COST}г",
         )
+        # Удаляем исходное сообщение со ссылкой + прогресс
+        try:
+            await msg.delete()
+        except Exception:
+            pass
         await progress.delete()
     except Exception:
         logger.exception("media_dl send failed")

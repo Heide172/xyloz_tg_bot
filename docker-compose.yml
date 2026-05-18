@@ -80,6 +80,10 @@ services:
     restart: unless-stopped
     environment:
       API_URL: "http://cobalt:9000/"
+      # Резидентный/мобильный прокси обходит датацентр-блок TikTok/YT/IG.
+      # Задать COBALT_PROXY в .env (http://user:pass@host:port). Пусто =
+      # без прокси (TikTok с датацентра часто отдаёт 500 на стриминге).
+      API_EXTERNAL_PROXY: "${COBALT_PROXY:-}"
       # внутренний сервис; наружу порт не публикуем
 
 volumes:

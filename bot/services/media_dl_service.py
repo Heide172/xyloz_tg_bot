@@ -8,6 +8,7 @@ import json
 import os
 import re
 import tempfile
+import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime
@@ -103,12 +104,21 @@ def _cobalt_resolve(url: str) -> tuple[str | None, str | None]:
             "User-Agent": "xyloz-bot/1.0",
         },
     )
+    data = None
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        # cobalt при ошибке отдаёт 400 с JSON {status:error, error:{code}}
+        try:
+            data = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            logger.warning("cobalt HTTP %s no body for %s", exc.code, url)
+            return None, "Не удалось обработать ссылку."
     except Exception as exc:
-        logger.warning("cobalt request failed for %s: %s", url, str(exc)[:200])
-        return None, "Сервис скачивания недоступен."
+        logger.warning("cobalt unreachable for %s: %s", url, str(exc)[:200])
+        return None, "Сервис скачивания недоступен (попробуй позже)."
+
     status = data.get("status")
     if status in ("tunnel", "redirect"):
         return data.get("url"), None
@@ -121,10 +131,18 @@ def _cobalt_resolve(url: str) -> tuple[str | None, str | None]:
         return None, "Нечего скачивать (пустой ответ)."
     if status == "local-processing":
         return None, "Этот ролик требует склейки на клиенте — не поддерживается."
-    err = (data.get("error") or {}).get("code", "")
+
+    err = str((data.get("error") or {}).get("code", "")).lower()
     logger.warning("cobalt status=%s err=%s url=%s", status, err, url)
-    if "auth" in str(err) or "private" in str(err):
+    if "youtube" in err or "not a bot" in err or "token" in err:
+        return None, (
+            "YouTube не отдаёт видео с сервера (антибот). "
+            "Кидай TikTok — он качается надёжно."
+        )
+    if "auth" in err or "private" in err or "login" in err:
         return None, "Видео приватное / требует логина."
+    if "unsupported" in err or "link" in err:
+        return None, "Эта ссылка не поддерживается для скачивания."
     return None, "Не удалось получить видео (сайт не отдал)."
 
 
