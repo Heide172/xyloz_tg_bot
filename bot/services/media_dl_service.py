@@ -105,7 +105,22 @@ def download_sync(url: str) -> tuple[str | None, str | None]:
         "max_filesize": MAX_BYTES,
         "socket_timeout": 30,
         "retries": 2,
+        # Мобильный UA + альтернативные YouTube-клиенты обходят
+        # "confirm you're not a bot" с серверного IP без cookies.
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
+            )
+        },
+        "extractor_args": {
+            "youtube": {"player_client": ["android", "ios", "mweb", "web"]}
+        },
     }
+    # Опциональные cookies (Netscape-формат) для YouTube/Instagram.
+    cookies = (os.getenv("MEDIADL_COOKIES_FILE") or "").strip()
+    if cookies and os.path.exists(cookies):
+        opts["cookiefile"] = cookies
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -131,7 +146,15 @@ def download_sync(url: str) -> tuple[str | None, str | None]:
         return path, None
     except Exception as exc:
         msg = str(exc)
-        if "filesize" in msg.lower() or "max_filesize" in msg.lower():
-            return None, "Видео слишком большое для Telegram."
+        low = msg.lower()
         logger.warning("yt-dlp failed for %s: %s", url, msg[:200])
-        return None, "Не удалось скачать (приватное видео или сайт не отдал)."
+        if "filesize" in low or "max_filesize" in low:
+            return None, "Видео слишком большое для Telegram."
+        if "not a bot" in low or "sign in" in low or "cookies" in low:
+            return None, (
+                "YouTube блокирует скачивание с сервера (бот-проверка). "
+                "TikTok/Instagram Reels качаются — кидай оттуда."
+            )
+        if "private" in low or "login" in low or "unavailable" in low:
+            return None, "Видео приватное или недоступно."
+        return None, "Не удалось скачать (сайт не отдал видео)."
