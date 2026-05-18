@@ -76,14 +76,13 @@ services:
       - "8003:80"
 
   cobalt:
-    image: ghcr.io/imputnet/cobalt:10
+    image: ghcr.io/imputnet/cobalt:latest
     restart: unless-stopped
     environment:
       API_URL: "http://cobalt:9000/"
-      # Резидентный/мобильный прокси обходит датацентр-блок TikTok/YT/IG.
-      # Задать COBALT_PROXY в .env (http://user:pass@host:port). Пусто =
-      # без прокси (TikTok с датацентра часто отдаёт 500 на стриминге).
-      API_EXTERNAL_PROXY: "${COBALT_PROXY:-}"
+      # Для прокси (обход датацентр-блока) добавь сюда вручную строку:
+      #   API_EXTERNAL_PROXY: "http://user:pass@host:port"
+      # ПУСТУЮ строку не задавать — cobalt ломает tunnel (500).
       # внутренний сервис; наружу порт не публикуем
 
 volumes:
