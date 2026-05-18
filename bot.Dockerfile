@@ -8,7 +8,7 @@ WORKDIR /app
 COPY . .
 RUN chmod +x scripts/wait-for-postgres.sh
 RUN apt-get update && \
-    apt-get install -y netcat-openbsd && \
+    apt-get install -y netcat-openbsd ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 # устанавливаем зависимости
 RUN pip install --no-cache-dir -r requirements.txt

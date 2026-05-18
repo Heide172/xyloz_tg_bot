@@ -5,6 +5,7 @@ from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators, BotC
 from handlers.admin_status import router as admin_status_router
 from handlers.ask import router as ask_router
 from handlers.casino import router as casino_router
+from handlers.media_dl import router as media_dl_router
 from handlers.digest import router as digest_router
 from handlers.joke import router as joke_router
 from handlers.messages import router as message_router
@@ -71,6 +72,7 @@ async def main():
     dp.include_router(joke_router)
     dp.include_router(casino_router)
     dp.include_router(rules_router)
+    dp.include_router(media_dl_router)
     dp.include_router(admin_status_router)
     dp.include_router(message_router)
     dp.include_router(reaction_router)
