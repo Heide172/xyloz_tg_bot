@@ -1,6 +1,8 @@
-"""RAG-сервис: семантический поиск в истории чата + LLM-ответ с цитатами."""
+"""RAG-сервис: гибридный (вектор + лексика) поиск в истории чата +
+LLM-ответ с цитатами."""
 import asyncio
 import os
+import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -27,6 +29,44 @@ ASK_REWRITE_VARIANTS = int(os.getenv("ASK_REWRITE_VARIANTS", "3"))
 ASK_PER_QUERY_K = int(os.getenv("ASK_PER_QUERY_K", "15"))
 ASK_MIN_QUERY_LEN = 3
 MSK = ZoneInfo("Europe/Moscow")
+
+# Стоп-слова: вопросительные/служебные, не несут темы поиска.
+_STOP = {
+    "как", "много", "сколько", "раз", "про", "что", "чем", "чём", "кто",
+    "где", "когда", "почему", "зачем", "была", "были", "было", "был",
+    "это", "эта", "этот", "тот", "там", "тут", "она", "они", "оно",
+    "его", "ему", "нам", "вам", "või", "или", "ещё", "уже", "вообще",
+    "говорил", "говорила", "говорили", "писал", "писала", "обсуждал",
+    "обсуждали", "тему", "теме", "часто", "редко",
+    "пользователь", "пользователя", "юзер", "юзера", "человек", "чел",
+}
+
+
+def _extract_author(query: str) -> str | None:
+    m = re.search(r"@([A-Za-z0-9_]{3,32})", query)
+    return m.group(1) if m else None
+
+
+def _keyword_terms(query: str) -> list[str]:
+    """Значимые слова темы: длина ≥4, не стоп-слова, без @mention."""
+    q = re.sub(r"@[A-Za-z0-9_]{3,32}", " ", query.lower())
+    words = re.findall(r"[\wёа-я]{4,}", q, flags=re.UNICODE)
+    terms = []
+    for w in words:
+        if w in _STOP or w.isdigit():
+            continue
+        terms.append(w)
+    return terms[:6]
+
+
+def _term_root(term: str) -> str:
+    """Грубый стемминг: отрезаем рус. окончание (≤2 буквы), мин длина 4.
+    'дроны'→'дрон' → ILIKE '%дрон%' ловит дрон/дроны/дронов/дроне."""
+    if len(term) > 5:
+        return term[:-2]
+    if len(term) > 4:
+        return term[:-1]
+    return term
 
 
 def parse_ask_query(text: str | None) -> str:
@@ -123,6 +163,60 @@ def _search_similar(chat_id: int, query_vec: list[float], k: int) -> list[dict]:
                 "created_at": msg.created_at,
                 "author": _author_label(user.username if user else None, user.fullname if user else None),
                 "similarity": float(1.0 - dist),
+                "is_hit": True,
+            })
+        return results
+    finally:
+        session.close()
+
+
+def _search_lexical(
+    chat_id: int, terms: list[str], author: str | None, k: int
+) -> list[dict]:
+    """Точный лексический поиск по словам темы (ILIKE по корню),
+    опционально только сообщения @author. Закрывает пробел чистого
+    вектора для конкретных слов ('дроны') и count-вопросов про юзера."""
+    if not terms:
+        return []
+    session = SessionLocal()
+    try:
+        roots = [_term_root(t) for t in terms]
+        q = (
+            session.query(Message, User)
+            .outerjoin(User, Message.user_id == User.id)
+            .filter(
+                Message.chat_id == chat_id,
+                Message.text.isnot(None),
+                Message.text != "",
+            )
+        )
+        # OR по корням термов
+        cond = None
+        for r in roots:
+            c = Message.text.ilike(f"%{r}%")
+            cond = c if cond is None else (cond | c)
+        q = q.filter(cond)
+        if author:
+            q = q.filter(func.lower(User.username) == author.lower())
+        rows = (
+            q.order_by(Message.created_at.desc()).limit(k).all()
+        )
+        results = []
+        for msg, user in rows:
+            txt = (msg.text or "").strip()
+            low = txt.lower()
+            matched = sum(1 for r in roots if r in low)
+            results.append({
+                "id": msg.id,
+                "text": txt,
+                "created_at": msg.created_at,
+                "author": _author_label(
+                    user.username if user else None,
+                    user.fullname if user else None,
+                ),
+                # автор-скоуп — прямой ответ на вопрос про юзера, ставим
+                # высокий приоритет, чтобы merge не срезал
+                "similarity": (0.97 if author else 0.80) + 0.01 * matched,
                 "is_hit": True,
             })
         return results
@@ -246,6 +340,19 @@ async def stream_ask(
     for vec in embeds:
         hits = await asyncio.to_thread(_search_similar, chat_id, vec, ASK_PER_QUERY_K)
         per_query_hits.append(hits)
+
+    # Гибрид: лексический поиск по словам темы. Если в вопросе есть
+    # @username — тянем сообщения именно этого автора (точный ответ на
+    # «как много X говорил про Y», count-вопросы).
+    author = _extract_author(query)
+    terms = _keyword_terms(query)
+    if terms:
+        lex_k = ASK_PER_QUERY_K * 3 if author else ASK_PER_QUERY_K
+        lex = await asyncio.to_thread(
+            _search_lexical, chat_id, terms, author, lex_k
+        )
+        if lex:
+            per_query_hits.append(lex)
 
     hits = _merge_hits(per_query_hits)
     if not hits:
