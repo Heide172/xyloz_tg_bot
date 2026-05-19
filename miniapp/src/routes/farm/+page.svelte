@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { api } from '$lib/api';
   import { fmtCoins } from '$lib/format';
   import { haptic, showAlert } from '$lib/tg';
@@ -70,21 +70,93 @@
       ? market.rate / market.anchor_rate
       : 1;
 
-  function spark(h: { rate: number }[]): string {
-    if (!h || h.length < 2) return '';
-    const b = '▁▂▃▄▅▆▇█';
-    const v = h.slice(-32).map((x) => x.rate);
-    const lo = Math.min(...v), hi = Math.max(...v), rng = hi - lo || 1;
-    return v.map((x) => b[Math.min(7, Math.floor(((x - lo) / rng) * 7))]).join('');
+  // Биржевой график (TradingView lightweight-charts), client-only.
+  let chartEl: HTMLDivElement | null = null;
+  let _chart: any = null;
+  let _series: any = null;
+  let _ro: ResizeObserver | null = null;
+
+  function histData(h: { ts: string; rate: number }[]) {
+    const m = new Map<number, number>();
+    for (const x of h) {
+      const iso = /[zZ]|[+-]\d\d:?\d\d$/.test(x.ts) ? x.ts : x.ts + 'Z';
+      const t = Math.floor(Date.parse(iso) / 1000);
+      if (!Number.isNaN(t)) m.set(t, x.rate); // дубль времени → последний
+    }
+    return [...m.entries()].sort((a, b) => a[0] - b[0])
+      .map(([time, value]) => ({ time, value }));
+  }
+
+  function cssVar(name: string, fallback: string) {
+    if (typeof window === 'undefined') return fallback;
+    const v = getComputedStyle(document.documentElement)
+      .getPropertyValue(name).trim();
+    return v || fallback;
+  }
+
+  async function initChart() {
+    if (!chartEl || _chart || typeof window === 'undefined') return;
+    const data = histData(market?.history ?? []);
+    if (data.length < 2) return;
+    const { createChart, ColorType } = await import('lightweight-charts');
+    const text = cssVar('--text-muted', '#8a8f98');
+    const up = data[data.length - 1].value >= data[0].value;
+    const accent = up ? '#26a69a' : '#ef5350';
+    _chart = createChart(chartEl, {
+      width: chartEl.clientWidth,
+      height: 160,
+      layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: text, fontSize: 10 },
+      grid: { vertLines: { visible: false }, horzLines: { color: 'rgba(127,127,127,0.12)' } },
+      rightPriceScale: { borderVisible: false },
+      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false },
+      crosshair: { mode: 1 },
+      handleScale: true,
+      handleScroll: true
+    });
+    _series = _chart.addAreaSeries({
+      lineColor: accent,
+      lineWidth: 2,
+      topColor: accent + '55',
+      bottomColor: accent + '05',
+      priceFormat: { type: 'price', precision: 0, minMove: 1 }
+    });
+    _series.setData(data);
+    _chart.timeScale().fitContent();
+    _ro = new ResizeObserver(() => {
+      if (_chart && chartEl) _chart.applyOptions({ width: chartEl.clientWidth });
+    });
+    _ro.observe(chartEl);
+  }
+
+  function updateChart() {
+    if (!_series) { initChart(); return; }
+    const data = histData(market?.history ?? []);
+    if (data.length >= 2) {
+      _series.setData(data);
+      _chart?.timeScale().fitContent();
+    }
   }
 
   async function loadMarket() {
     try {
       market = await api.farmMarket();
+      updateChart();
     } catch {
       /* не критично — деградируем к споту из state */
     }
   }
+
+  onDestroy(() => {
+    try {
+      _ro?.disconnect();
+      _chart?.remove();
+    } catch {
+      /* ignore */
+    }
+    _ro = null;
+    _chart = null;
+    _series = null;
+  });
 
   // Реактивно: меняется при смене heroFrame → Svelte перерисует <img>.
   $: heroSrcUrl = heroImgOk[heroFrame] ? `/farm/heroine_${heroFrame}.png` : '';
@@ -99,7 +171,9 @@
       state = await api.farmState();
       lastStateAt = Date.now();
       nowTs = Date.now();
-      loadMarket();
+      await loadMarket();
+      // DOM с chartEl уже отрисован (state выставлен) — добиваем init
+      requestAnimationFrame(() => initChart());
     } catch (e: any) {
       err = e?.message ?? 'Не удалось загрузить ферму';
     } finally {
@@ -369,13 +443,13 @@
               {devalX >= 1 ? `cp дешевле в ${devalX.toFixed(1)}×` : `cp дороже в ${(1 / devalX).toFixed(1)}×`}
             </b>
           </div>
-          {#if market.history && market.history.length > 1}
-            <div class="qrow">
-              <span class="muted small">История курса</span>
-              <span class="spark">{spark(market.history)}</span>
-            </div>
-          {/if}
         </div>
+        {#if market.history && market.history.length > 1}
+          <div class="chart-wrap">
+            <div class="muted small chart-cap">Курс cp → ₴ (история)</div>
+            <div class="chart" bind:this={chartEl}></div>
+          </div>
+        {/if}
       {/if}
       <div class="convert-row">
         <input type="number" min="1" max={maxConvert} step="100" bind:value={convertAmount} />
@@ -619,7 +693,9 @@
   .qrow { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
   .qrow b { font-size: 13px; }
   .qrow b.bad { color: #ff9a9a; }
-  .spark { font-family: monospace; letter-spacing: -1px; opacity: 0.8; }
+  .chart-wrap { margin-bottom: 10px; }
+  .chart-cap { margin: 2px 0 4px; }
+  .chart { width: 100%; height: 160px; }
   .getline { font-size: 15px; }
   .getline b { font-size: 17px; }
   .convert-row {
