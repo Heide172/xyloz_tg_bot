@@ -9,10 +9,6 @@
 
   const SYMBOLS = ['cherry', 'lemon', 'bell', 'star', 'diamond', 'wild', 'scatter'] as const;
   type Sym = (typeof SYMBOLS)[number];
-  const EMOJI: Record<Sym, string> = {
-    cherry: '🍒', lemon: '🍋', bell: '🔔', star: '⭐',
-    diamond: '💎', wild: '🃏', scatter: '✨'
-  };
   const BASE_SYMS: Sym[] = ['cherry', 'lemon', 'bell', 'star', 'diamond'];
 
   const LINES = [
@@ -33,11 +29,6 @@
   let busy = false;
   let last: GameResult | null = null;
   let err: string | null = null;
-  let imgOk: Record<Sym, boolean | null> = {
-    cherry: null, lemon: null, bell: null, star: null,
-    diamond: null, wild: null, scatter: null
-  };
-
   // Для каждого барабана — длинная лента символов + текущий offset (px) + transition
   let strips: Sym[][] = Array.from({ length: REELS }, () =>
     [...BASE_SYMS, ...BASE_SYMS, ...BASE_SYMS]
@@ -97,10 +88,9 @@
     } catch (e: any) {
       err = e?.message;
     }
+    // Префлайт спрайтов (прогрев кеша); фолбэка нет — PNG обязательны.
     for (const s of SYMBOLS) {
       const img = new Image();
-      img.onload = () => (imgOk[s] = true);
-      img.onerror = () => (imgOk[s] = false);
       img.src = `/slots/${s}.png`;
     }
   });
@@ -352,11 +342,7 @@
                   class:special={s === 'wild' || s === 'scatter'}
                   style="width: {CELL}px; height: {CELL}px"
                 >
-                  {#if imgOk[s]}
-                    <img src={`/slots/${s}.png`} alt={s} draggable="false" />
-                  {:else}
-                    <span class="emoji">{EMOJI[s]}</span>
-                  {/if}
+                  <img src={`/slots/${s}.png`} alt={s} draggable="false" />
                 </div>
               {/each}
             </div>
@@ -384,18 +370,11 @@
     </div>
   {/if}
 
-  <div class="paytable">
-    <div class="pt-title muted">5 барабанов · 3 ряда · 10 линий · 3+ слева</div>
-    <div class="pt-grid">
-      <span><span class="me">💎</span> 10/27/72</span>
-      <span><span class="me">⭐</span> 9/20/50</span>
-      <span><span class="me">🔔</span> 5/14/36</span>
-      <span><span class="me">🍋</span> 5/11/24</span>
-      <span><span class="me">🍒</span> 4/10/20</span>
-      <span><span class="me">🃏</span> wild — замена</span>
-      <span><span class="me">✨</span> scatter — фриспины</span>
-    </div>
-    <div class="muted pt-note">×ставка-на-линию (bet/10) за 3/4/5. 3+ ✨ → 4-7 фриспинов ×2 (≈раз в 17 спинов).</div>
+  <!-- Подробная paytable со схемами линий и примером — в спойлере
+       «Правила и выплаты» внизу экрана (GameRules). -->
+  <div class="pt-hint muted small">
+    5 барабанов · 3 ряда · 10 линий слева · ставка на линию = bet/10.
+    Подробные выплаты и схемы — в «Правилах» ниже.
   </div>
 
   <div class="bet">
@@ -494,7 +473,6 @@
     overflow: hidden;
   }
   .cell img { width: 100%; height: 100%; object-fit: cover; }
-  .emoji { font-size: 34px; line-height: 1; }
   .cell.special {
     box-shadow: inset 0 0 0 3px #f7d147;
     border-radius: 6px;
