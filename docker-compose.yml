@@ -76,7 +76,10 @@ services:
       - "8003:80"
 
   cobalt:
-    image: ghcr.io/imputnet/cobalt:latest
+    # Форк: апстрим cobalt + патч, добавляющий `caption` в ответ.
+    # См. cobalt/Dockerfile.
+    build:
+      context: ./cobalt
     restart: unless-stopped
     environment:
       API_URL: "http://cobalt:9000/"

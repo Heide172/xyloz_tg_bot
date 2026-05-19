@@ -19,7 +19,6 @@ from services.media_dl_service import (
     charge,
     download_sync,
     extract_url,
-    fetch_ig_caption,
     refund,
 )
 
@@ -74,7 +73,7 @@ async def auto_download(msg: types.Message):
         await progress.edit_text("Не удалось списать оплату.")
         return
 
-    items, err = await asyncio.to_thread(download_sync, url)
+    items, desc, err = await asyncio.to_thread(download_sync, url)
     if err or not items:
         await asyncio.to_thread(refund, user_id, msg.chat.id)
         await progress.edit_text(f"{err or 'Не удалось скачать'} (деньги возвращены).")
@@ -87,7 +86,6 @@ async def auto_download(msg: types.Message):
         (u.first_name or "кто-то") if u else "кто-то"
     )
     caption = f"📥 от {who} · −{MEDIADL_COST}г\n{url}"
-    desc = await asyncio.to_thread(fetch_ig_caption, url)
     if desc:
         caption = f"{caption}\n\n{desc}"
     try:
