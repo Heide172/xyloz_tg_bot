@@ -4,11 +4,19 @@
 # прод — флип DATABASE_URL и редеплой делает оператор по runbook ниже.
 #
 # ── RUNBOOK ──────────────────────────────────────────────────────────
-# 0. В Dokploy создать managed Postgres ресурс, получить DST URL.
+# 0. На существующем Postgres-инстансе Dokploy (там УЖЕ есть чужие
+#    данные) создать ОТДЕЛЬНУЮ БД под бота — НЕ лить в общую:
+#      ADMIN_DATABASE_URL=postgresql://…@<host>:5432/postgres \
+#      BOT_DB_NAME=xyloz_bot ./scripts/db_create.sh
+#    DST_DATABASE_URL = тот же host, но dbname=xyloz_bot.
+#    (db_restore без --clean — цель должна быть этой пустой БД.)
 # 1. РЕПЕТИЦИЯ (без даунтайма, в любое время):
 #      SRC_DATABASE_URL=<src> DST_DATABASE_URL=<dst> ./scripts/db_migrate.sh
 #    Сравнить два блока db_verify: alembic_version, counts, sum(balance)
 #    должны совпасть. Это валидирует механику переноса.
+#    Повтор (restore без --clean): сначала пересоздать выделенную БД —
+#      psql "$ADMIN_DATABASE_URL" -c 'DROP DATABASE "xyloz_bot"'
+#      ./scripts/db_create.sh   (DROP только выделенной, не общей!)
 # 2. CUTOVER (короткий даунтайм, деньги — без потери транзакций):
 #    a. В Dokploy остановить сервисы bot и api (чтобы не было записей).
 #    b. Прогнать этот скрипт ещё раз (свежий дамп уже без активных писателей).
