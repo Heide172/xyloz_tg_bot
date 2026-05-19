@@ -7,6 +7,7 @@ from handlers.ask import router as ask_router
 from handlers.casino import router as casino_router
 from handlers.media_dl import router as media_dl_router
 from handlers.digest import router as digest_router
+from handlers.feedback_admin import router as feedback_admin_router
 from handlers.joke import router as joke_router
 from handlers.messages import router as message_router
 from handlers.rules import router as rules_router
@@ -51,6 +52,7 @@ ADMIN_COMMANDS = PUBLIC_COMMANDS + [
     BotCommand(command="prompt_reset", description="Сбросить промпт"),
     BotCommand(command="admin_status", description="Полное состояние бота"),
     BotCommand(command="backfill", description="Управление backfill jobs"),
+    BotCommand(command="fb", description="Модерация обратной связи + награды"),
 ]
 
 
@@ -74,6 +76,7 @@ async def main():
     dp.include_router(rules_router)
     dp.include_router(media_dl_router)
     dp.include_router(admin_status_router)
+    dp.include_router(feedback_admin_router)
     dp.include_router(message_router)
     dp.include_router(reaction_router)
 

@@ -1,6 +1,15 @@
 from datetime import datetime
 
-from sqlalchemy import BIGINT, Column, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import (
+    BIGINT,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 
 from common.db.base import Base
 
@@ -16,6 +25,8 @@ class Feedback(Base):
     text = Column(Text, nullable=False)
     status = Column(String(16), nullable=False, default="new")  # new | seen | done
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    reward = Column(Integer, nullable=False, default=0)
+    rewarded_at = Column(DateTime, nullable=True)
 
     __table_args__ = (
         Index("idx_feedback_kind_status", "kind", "status"),
