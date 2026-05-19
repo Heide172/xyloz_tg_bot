@@ -3,13 +3,21 @@
   import { api } from '$lib/api';
   import { balanceStore } from '$lib/balance';
   import { fmtCoins } from '$lib/format';
+  import { CHANGELOG } from '$lib/changelog';
   import type { MeResponse } from '$lib/types';
 
   let me: MeResponse | null = null;
   let loading = true;
   let err: string | null = null;
+  let hasNew = false;
 
   onMount(async () => {
+    try {
+      const seen = localStorage.getItem('cl_seen') ?? '';
+      hasNew = !!CHANGELOG[0] && CHANGELOG[0].date > seen;
+    } catch {
+      /* ignore */
+    }
     try {
       me = await api.me();
     } catch (e: any) {
@@ -19,7 +27,7 @@
     }
   });
 
-  const baseTiles = [
+  $: baseTiles = [
     { href: '/farm', title: 'Ферма', desc: 'Тапай, копи cp, выводи в гривны' },
     { href: '/gacha', title: 'Гача', desc: 'Крути девочек, собирай коллекцию' },
     { href: '/markets', title: 'Рынки', desc: 'Открытые ставки' },
@@ -32,6 +40,11 @@
     { href: '/leaderboard', title: 'Статистика', desc: 'Баланс, казино, ферма, биг-вины' },
     { href: '/history', title: 'История', desc: 'Лента событий чата' },
     { href: '/rules', title: 'Правила', desc: 'Как это работает' },
+    {
+      href: '/changelog',
+      title: hasNew ? 'Что нового ●' : 'Что нового',
+      desc: hasNew ? 'Есть свежие обновления' : 'Список изменений'
+    },
     { href: '/feedback', title: 'Обратная связь', desc: 'Баг или идея' },
     {
       href: 'https://xn--b1afabzvcegckfhg.xn--p1ai/',
