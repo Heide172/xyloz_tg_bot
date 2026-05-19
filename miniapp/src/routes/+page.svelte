@@ -31,6 +31,7 @@
     { href: '/leaderboard', title: 'Статистика', desc: 'Баланс, казино, ферма, биг-вины' },
     { href: '/history', title: 'История', desc: 'Лента событий чата' },
     { href: '/rules', title: 'Правила', desc: 'Как это работает' },
+    { href: '/feedback', title: 'Обратная связь', desc: 'Баг или идея' },
     {
       href: 'https://xn--b1afabzvcegckfhg.xn--p1ai/',
       title: 'Поддержка по VPN',

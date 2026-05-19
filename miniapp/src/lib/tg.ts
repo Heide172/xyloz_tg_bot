@@ -41,6 +41,7 @@ export function getStartRoute(): string | null {
   const allowed: Record<string, string> = {
     duel: '/duel',
     farm: '/farm',
+    feedback: '/feedback',
     gacha: '/gacha',
     games: '/games',
     markets: '/markets',
