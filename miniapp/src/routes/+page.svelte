@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { balanceStore } from '$lib/balance';
   import { fmtCoins } from '$lib/format';
   import type { MeResponse } from '$lib/types';
 
@@ -63,12 +64,12 @@
     <div class="user-line muted">{displayName(me)}</div>
     {#if me.balance}
       <div class="big-num">
-        {fmtCoins(me.balance.balance)}
+        {fmtCoins($balanceStore.balance ?? me.balance.balance)}
         <span class="big-suf muted">гривен</span>
       </div>
       <div class="bank-line">
         <span class="muted">Банк чата:</span>
-        <strong>{fmtCoins(me.balance.bank)}</strong>
+        <strong>{fmtCoins($balanceStore.bank ?? me.balance.bank)}</strong>
       </div>
     {:else}
       <div class="muted">chat_id не передан — баланс недоступен</div>

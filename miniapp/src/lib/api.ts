@@ -1,4 +1,5 @@
 import { getChatId, getInitData } from './tg';
+import { seedFromMe, setBalance, sniffBalance } from './balance';
 import type {
   BalanceResponse,
   FarmState,
@@ -12,6 +13,39 @@ import type {
 } from './types';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '/api/v1').replace(/\/$/, '');
+
+async function extractError(resp: Response): Promise<string> {
+  let body: any = null;
+  try {
+    body = await resp.json();
+  } catch {
+    try {
+      const t = (await resp.text())?.trim();
+      if (t) return t.slice(0, 300);
+    } catch {
+      /* ignore */
+    }
+    return `HTTP ${resp.status}`;
+  }
+  const d = body?.detail ?? body?.message ?? body;
+  if (typeof d === 'string') return d || `HTTP ${resp.status}`;
+  // FastAPI 422: detail = [{loc,msg,type}, ...]
+  if (Array.isArray(d)) {
+    const msgs = d
+      .map((e) => (typeof e === 'string' ? e : e?.msg))
+      .filter(Boolean);
+    if (msgs.length) return msgs.join('; ');
+  }
+  if (d && typeof d === 'object') {
+    if (typeof d.msg === 'string') return d.msg;
+    try {
+      return JSON.stringify(d).slice(0, 300);
+    } catch {
+      /* ignore */
+    }
+  }
+  return `HTTP ${resp.status}`;
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers ?? {});
@@ -28,16 +62,19 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const resp = await fetch(url.toString(), { ...init, headers });
   if (!resp.ok) {
-    let detail = '';
-    try {
-      const body = await resp.json();
-      detail = body?.detail ?? '';
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail || `HTTP ${resp.status}`);
+    throw new Error(await extractError(resp));
   }
-  return resp.json();
+  const data = await resp.json();
+  // Глобальный кэш баланса: подхватываем из любого ответа.
+  try {
+    if (path === '/me') seedFromMe(data);
+    else if (path === '/balance')
+      setBalance(data?.balance, data?.bank);
+    else sniffBalance(data);
+  } catch {
+    /* кэш баланса не должен ломать запрос */
+  }
+  return data as T;
 }
 
 export const api = {
