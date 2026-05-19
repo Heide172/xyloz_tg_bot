@@ -91,8 +91,14 @@ def refund(user_id: int, chat_id: int) -> None:
         session.close()
 
 
-def _cobalt_resolve(url: str) -> tuple[str | None, str | None]:
-    """Спрашивает cobalt прямую ссылку на медиа. (media_url, error)."""
+# Telegram media group максимум — 10 элементов.
+_MAX_GROUP = 10
+
+
+def _cobalt_resolve(url: str) -> tuple[list[dict] | None, str | None]:
+    """Спрашивает cobalt. Возвращает (items, error), где items — список
+    {"type": "video"|"photo"|"auto", "url": str}. Несколько элементов =
+    карусель (Instagram-пост с фото/видео)."""
     body = json.dumps({"url": url, "videoQuality": "720"}).encode()
     req = urllib.request.Request(
         COBALT_API,
@@ -121,14 +127,26 @@ def _cobalt_resolve(url: str) -> tuple[str | None, str | None]:
 
     status = data.get("status")
     if status in ("tunnel", "redirect"):
-        return data.get("url"), None
+        u = data.get("url")
+        if not u:
+            return None, "Нечего скачивать (пустой ответ)."
+        # Тип определим по Content-Type при скачивании.
+        return [{"type": "auto", "url": u}], None
     if status == "picker":
-        items = data.get("picker") or []
-        vid = next((i for i in items if i.get("type") == "video"), None)
-        chosen = (vid or (items[0] if items else {})).get("url")
-        if chosen:
-            return chosen, None
-        return None, "Нечего скачивать (пустой ответ)."
+        raw = data.get("picker") or []
+        items: list[dict] = []
+        for it in raw:
+            iu = it.get("url")
+            if not iu:
+                continue
+            t = it.get("type")
+            items.append({
+                "type": t if t in ("video", "photo") else "auto",
+                "url": iu,
+            })
+        if not items:
+            return None, "Нечего скачивать (пустой ответ)."
+        return items[:_MAX_GROUP], None
     if status == "local-processing":
         return None, "Этот ролик требует склейки на клиенте — не поддерживается."
 
@@ -146,20 +164,25 @@ def _cobalt_resolve(url: str) -> tuple[str | None, str | None]:
     return None, "Не удалось получить видео (сайт не отдал)."
 
 
-def download_sync(url: str) -> tuple[str | None, str | None]:
-    """Резолвит ссылку через cobalt и качает файл ≤MAX_BYTES.
-    Вызывать в asyncio.to_thread — операция блокирующая и долгая."""
-    media_url, err = _cobalt_resolve(url)
-    if err or not media_url:
-        return None, err or "Не удалось получить видео."
-
+def _fetch_one(media_url: str, declared_type: str) -> tuple[str | None, str | None, str | None]:
+    """Качает один файл ≤MAX_BYTES. Возвращает (path, type, error).
+    type — video|photo (определяется по Content-Type если declared=auto)."""
+    req = urllib.request.Request(media_url, headers={"User-Agent": "xyloz-bot/1.0"})
     tmpdir = tempfile.gettempdir()
-    path = os.path.join(tmpdir, f"mdl_{uuid.uuid4().hex}.mp4")
-    req = urllib.request.Request(
-        media_url, headers={"User-Agent": "xyloz-bot/1.0"}
-    )
+    path = None
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            mtype = declared_type
+            if mtype == "auto":
+                if ctype.startswith("image/"):
+                    mtype = "photo"
+                elif ctype.startswith("video/"):
+                    mtype = "video"
+                else:
+                    mtype = "video"
+            ext = ".jpg" if mtype == "photo" else ".mp4"
+            path = os.path.join(tmpdir, f"mdl_{uuid.uuid4().hex}{ext}")
             total = 0
             with open(path, "wb") as f:
                 while True:
@@ -170,19 +193,42 @@ def download_sync(url: str) -> tuple[str | None, str | None]:
                     if total > MAX_BYTES:
                         f.close()
                         os.remove(path)
-                        return None, (
-                            f"Видео больше {MAX_BYTES // 1024 // 1024} МБ "
+                        return None, None, (
+                            f"Файл больше {MAX_BYTES // 1024 // 1024} МБ "
                             f"(лимит Telegram)."
                         )
                     f.write(chunk)
-        if total == 0:
+        if not total:
             os.remove(path)
-            return None, "Пустой файл."
-        return path, None
+            return None, None, "Пустой файл."
+        return path, mtype, None
     except Exception as exc:
-        logger.warning("media fetch failed for %s: %s", url, str(exc)[:200])
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-        return None, "Не удалось скачать файл."
+        logger.warning("media fetch failed for %s: %s", media_url, str(exc)[:200])
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        return None, None, "Не удалось скачать файл."
+
+
+def download_sync(url: str) -> tuple[list[tuple[str, str]] | None, str | None]:
+    """Резолвит ссылку через cobalt и качает все медиа (фото/видео карусели).
+    Возвращает (items, error), где items — список (path, type).
+    Вызывать в asyncio.to_thread — операция блокирующая и долгая."""
+    resolved, err = _cobalt_resolve(url)
+    if err or not resolved:
+        return None, err or "Не удалось получить видео."
+
+    out: list[tuple[str, str]] = []
+    last_err = None
+    for item in resolved:
+        path, mtype, ferr = _fetch_one(item["url"], item.get("type", "auto"))
+        if ferr or not path:
+            last_err = ferr or "Не удалось скачать файл."
+            continue
+        out.append((path, mtype))
+
+    if not out:
+        return None, last_err or "Не удалось скачать файл."
+    return out, None
