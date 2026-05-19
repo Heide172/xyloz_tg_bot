@@ -8,6 +8,7 @@ Telegram ставит custom_title только админам и максиму
 аренды тегов.
 """
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 
@@ -18,6 +19,24 @@ from common.models.bot_setting import BotSetting
 logger = get_logger(__name__)
 
 TITLE_MAX = 16
+MSK = ZoneInfo("Europe/Moscow")
+
+
+def _today_msk() -> str:
+    return datetime.now(tz=MSK).date().isoformat()
+
+
+def _parse_holder(value: str | None) -> tuple[int | None, str | None]:
+    """nomtag-значение: 'tg_id' (старый формат) или 'tg_id:YYYY-MM-DD'."""
+    if not value:
+        return None, None
+    parts = value.split(":", 1)
+    try:
+        tg_id = int(parts[0])
+    except ValueError:
+        return None, None
+    day = parts[1] if len(parts) > 1 else None
+    return tg_id, day
 
 
 def _ensure_table() -> None:
@@ -47,6 +66,33 @@ def _setting_set(key: str, value: str) -> None:
     except Exception:
         s.rollback()
         raise
+    finally:
+        s.close()
+
+
+def _setting_delete(key: str) -> None:
+    _ensure_table()
+    s = SessionLocal()
+    try:
+        s.query(BotSetting).filter(BotSetting.key == key).delete()
+        s.commit()
+    except Exception:
+        s.rollback()
+        raise
+    finally:
+        s.close()
+
+
+def _settings_with_prefix(prefix: str) -> list[tuple[str, str]]:
+    _ensure_table()
+    s = SessionLocal()
+    try:
+        rows = (
+            s.query(BotSetting)
+            .filter(BotSetting.key.like(prefix + "%"))
+            .all()
+        )
+        return [(r.key, r.value) for r in rows]
     finally:
         s.close()
 
@@ -112,23 +158,58 @@ async def assign_nomination_tag(
     проверка делается вызывающей стороной при наличии rental-сервиса.
     """
     key = f"nomtag:{slot}:{chat_id}"
-    prev = _setting_get(key)
-    if prev:
-        try:
-            prev_id = int(prev)
-            if prev_id != tg_user_id:
-                # Номинант перетирал арендный тег у prev — вернём его, если
-                # аренда ещё активна; иначе просто снимаем (demote).
-                from services.tag_rental_service import active_title_for_tg
+    prev_id, _prev_day = _parse_holder(_setting_get(key))
+    if prev_id is not None and prev_id != tg_user_id:
+        # Номинант перетирал арендный тег у prev — вернём его, если
+        # аренда ещё активна; иначе просто снимаем (demote).
+        from services.tag_rental_service import active_title_for_tg
 
-                rented = active_title_for_tg(chat_id, prev_id)
-                if rented:
-                    await set_title(bot, chat_id, prev_id, rented)
-                else:
-                    await clear_title(bot, chat_id, prev_id)
-        except ValueError:
-            pass
+        rented = active_title_for_tg(chat_id, prev_id)
+        if rented:
+            await set_title(bot, chat_id, prev_id, rented)
+        else:
+            await clear_title(bot, chat_id, prev_id)
     # Приоритет всегда у номинанта — перетираем любой тег нового держателя.
     ok = await set_title(bot, chat_id, tg_user_id, title)
     if ok:
-        _setting_set(key, str(tg_user_id))
+        _setting_set(key, f"{tg_user_id}:{_today_msk()}")
+
+
+async def expire_nomination_tags(bot: Bot) -> int:
+    """Снять протухшие номинант-теги (день MSK < сегодня или старый
+    формат без даты). Если у держателя активная аренда — вернуть
+    арендный тег. Возвращает число снятых. Вызывается планировщиком.
+    """
+    today = _today_msk()
+    cleared = 0
+    for key, value in _settings_with_prefix("nomtag:"):
+        tg_id, day = _parse_holder(value)
+        if tg_id is None:
+            _setting_delete(key)
+            continue
+        if day == today:
+            continue  # тег за сегодня — не трогаем
+        parts = key.split(":")
+        if len(parts) != 3:
+            continue
+        try:
+            chat_id = int(parts[2])
+        except ValueError:
+            continue
+        from services.tag_rental_service import active_title_for_tg
+
+        rented = active_title_for_tg(chat_id, tg_id)
+        try:
+            if rented:
+                await set_title(bot, chat_id, tg_id, rented)
+            else:
+                await clear_title(bot, chat_id, tg_id)
+            _setting_delete(key)
+            cleared += 1
+        except Exception:
+            logger.warning(
+                "expire nomtag failed key=%s tg=%s", key, tg_id
+            )
+    if cleared:
+        logger.info("nomination tags expired: %d", cleared)
+    return cleared

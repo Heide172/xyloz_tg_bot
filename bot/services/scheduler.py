@@ -18,6 +18,7 @@ from services.market_service import recover_and_snapshot_all
 from services.markets_service import auto_close_expired
 from services.nlp_classifier import classify_pending_once
 from services.nominations_service import run_daily_nominations
+from services.tag_service import expire_nomination_tags
 
 logger = get_logger(__name__)
 
@@ -133,6 +134,14 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         recover_and_snapshot_all,
         trigger=IntervalTrigger(minutes=max(1, int(MARKET_TICK_MIN))),
         id="market_recover_tick",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        expire_nomination_tags,
+        trigger=CronTrigger(hour=0, minute=5, timezone=MOSCOW_TZ),
+        args=(bot,),
+        id="nomtag_expire",
         coalesce=True,
         max_instances=1,
     )
