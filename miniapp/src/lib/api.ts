@@ -206,6 +206,31 @@ export const api = {
     }),
   adminMarketCancel: (id: number) =>
     request<Record<string, any>>(`/admin/markets/${id}/cancel`, { method: 'POST' }),
+  adminFeedbackList: () =>
+    request<{
+      items: {
+        id: number;
+        kind: 'bug' | 'idea';
+        status: string;
+        text: string;
+        chat_id: number | null;
+        created_at: string | null;
+        default_reward: number;
+      }[];
+    }>('/admin/feedback'),
+  adminFeedbackClose: (id: number, amount: number | null) =>
+    request<{
+      ok: boolean;
+      id: number;
+      kind: string;
+      reward: number;
+      credited: boolean;
+      chat_id: number | null;
+      author_name: string | null;
+    }>(`/admin/feedback/${id}/close`, {
+      method: 'POST',
+      body: JSON.stringify({ amount })
+    }),
 
   // ---------- clicker farm ----------
   farmState: () => request<FarmState>('/farm'),

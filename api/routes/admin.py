@@ -25,6 +25,12 @@ from services.markets_service import (
     cancel_market,
     resolve_market,
 )
+from services.feedback_service import (
+    close as fb_close,
+    default_reward as fb_default_reward,
+    get_one as fb_get_one,
+    list_open as fb_list_open,
+)
 
 router = APIRouter()
 
@@ -187,3 +193,87 @@ async def markets_cancel(market_id: int, auth: TgWebAppAuth = Depends(require_au
     except MarketError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return result
+
+
+# ---------------- feedback moderation + награды ----------------
+# Фидбэк глобальный (не привязан к текущему чату): членство в чате
+# не требуем. Награда начисляется в чат, откуда фидбэк прислан
+# (chat_id хранится в строке feedback) — логика в feedback_service.
+
+
+@router.get("/feedback")
+async def feedback_list(auth: TgWebAppAuth = Depends(require_auth)):
+    _ensure_admin(auth)
+    rows = await asyncio.to_thread(fb_list_open, 50)
+    return {
+        "items": [
+            {
+                "id": r["id"],
+                "kind": r["kind"],
+                "status": r["status"],
+                "text": r["text"],
+                "chat_id": r["chat_id"],
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "default_reward": fb_default_reward(r["kind"]),
+            }
+            for r in rows
+        ]
+    }
+
+
+class FeedbackCloseReq(BaseModel):
+    amount: Optional[int] = Field(
+        default=None, description="None = дефолт по типу; 0 = без награды"
+    )
+
+
+def _notify_author(res: dict) -> None:
+    atg = res.get("author_tg_id")
+    if not atg or not res.get("credited"):
+        return
+    from services.social_service import send_chat_message
+
+    kind_ru = "баг" if res["kind"] == "bug" else "идею"
+    note = (
+        f"Спасибо за {kind_ru}! Заявка #{res['id']} закрыта, "
+        f"тебе начислено +{res['reward']}г."
+    )
+    try:
+        send_chat_message(atg, note)
+    except Exception:
+        pass
+
+
+@router.post("/feedback/{fid}/close")
+async def feedback_close(
+    fid: int,
+    req: FeedbackCloseReq,
+    auth: TgWebAppAuth = Depends(require_auth),
+):
+    _ensure_admin(auth)
+    existing = await asyncio.to_thread(fb_get_one, fid)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+
+    res = await asyncio.to_thread(fb_close, fid, req.amount)
+    if not res.get("ok"):
+        err = res.get("error")
+        if err == "already_done":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Уже закрыта (награда была {res.get('reward', 0)}г)",
+            )
+        if err == "not_found":
+            raise HTTPException(status_code=404, detail="Заявка не найдена")
+        raise HTTPException(status_code=500, detail="Не удалось закрыть")
+
+    await asyncio.to_thread(_notify_author, res)
+    return {
+        "ok": True,
+        "id": res["id"],
+        "kind": res["kind"],
+        "reward": res["reward"],
+        "credited": res["credited"],
+        "chat_id": res.get("chat_id"),
+        "author_name": res.get("author_name"),
+    }
