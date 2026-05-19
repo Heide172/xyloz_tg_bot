@@ -37,10 +37,6 @@ class ClickerFarm(Base):
 
     last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
-    # daily-cap для конвертации в гривны
-    daily_converted = Column(Integer, nullable=False, default=0)  # сколько гривен за окно
-    daily_window_start = Column(DateTime, nullable=False, default=datetime.utcnow)
-
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
