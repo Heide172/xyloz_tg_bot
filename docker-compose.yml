@@ -19,6 +19,11 @@ services:
 #    entrypoint: ["./scripts/wait-for-postgres.sh", "postgres"]
     command: alembic upgrade head
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
   bot:
     build:
       context: .
@@ -27,12 +32,15 @@ services:
       - ./.env
     environment:
       - NLP_SERVICE_URL=http://nlp:8000
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       migrations:
         condition: service_completed_successfully
       nlp:
         condition: service_started
       cobalt:
+        condition: service_started
+      redis:
         condition: service_started
 
   nlp:
@@ -60,11 +68,14 @@ services:
       - ./.env
     environment:
       - PYTHONPATH=/app:/app/bot
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     ports:
       - "8002:8000"
     depends_on:
       migrations:
         condition: service_completed_successfully
+      redis:
+        condition: service_started
 
   miniapp:
     build:

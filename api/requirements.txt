@@ -7,3 +7,4 @@ python-dotenv
 pgvector>=0.3
 aiohttp>=3.9
 openai>=1.40
+redis>=5

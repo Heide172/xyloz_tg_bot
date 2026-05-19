@@ -22,6 +22,16 @@ from common.models.economy_tx import EconomyTx
 from common.models.user import User
 from common.models.user_balance import UserBalance
 
+
+def _publish(user_id: int, chat_id: int, balance: int) -> None:
+    """Пуш баланса в Redis (SSE). Best-effort, не ломает основную логику."""
+    try:
+        from common.events import publish_balance
+
+        publish_balance(user_id, chat_id, balance)
+    except Exception:
+        pass
+
 logger = get_logger(__name__)
 
 START_BONUS = int(os.getenv("ECONOMY_START_BONUS", "1000"))
@@ -126,7 +136,9 @@ def credit(user_id: int, chat_id: int, amount: int, kind: str, ref_id: str | Non
         bal.updated_at = datetime.utcnow()
         _log_tx(session, user_id, chat_id, amount, kind=kind, ref_id=ref_id, note=note)
         session.commit()
-        return bal.balance
+        nb = bal.balance
+        _publish(user_id, chat_id, nb)
+        return nb
     except Exception:
         session.rollback()
         raise
@@ -147,7 +159,9 @@ def debit(user_id: int, chat_id: int, amount: int, kind: str, ref_id: str | None
         bal.updated_at = datetime.utcnow()
         _log_tx(session, user_id, chat_id, -amount, kind=kind, ref_id=ref_id, note=note)
         session.commit()
-        return bal.balance
+        nb = bal.balance
+        _publish(user_id, chat_id, nb)
+        return nb
     except Exception:
         session.rollback()
         raise
@@ -174,7 +188,10 @@ def transfer(from_user_id: int, to_user_id: int, chat_id: int, amount: int, kind
         _log_tx(session, from_user_id, chat_id, -amount, kind=kind, ref_id=str(to_user_id), note=note)
         _log_tx(session, to_user_id, chat_id, amount, kind=kind, ref_id=str(from_user_id), note=note)
         session.commit()
-        return sender.balance, receiver.balance
+        sb, rb = sender.balance, receiver.balance
+        _publish(from_user_id, chat_id, sb)
+        _publish(to_user_id, chat_id, rb)
+        return sb, rb
     except Exception:
         session.rollback()
         raise
@@ -214,12 +231,15 @@ def transfer_with_fee(
         _log_tx(session, None, chat_id, fee, kind="transfer_fee",
                 ref_id=str(from_user_id), note=f"комиссия перевода {amount}")
         session.commit()
+        sb, rb = sender.balance, receiver.balance
+        _publish(from_user_id, chat_id, sb)
+        _publish(to_user_id, chat_id, rb)
         return {
             "amount": amount,
             "fee": fee,
             "total": total,
-            "sender_balance": sender.balance,
-            "receiver_balance": receiver.balance,
+            "sender_balance": sb,
+            "receiver_balance": rb,
         }
     except Exception:
         session.rollback()

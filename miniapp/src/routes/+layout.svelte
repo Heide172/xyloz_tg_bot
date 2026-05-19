@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { tgReady, getTg, getStartRoute } from '$lib/tg';
+  import { startBalanceSSE } from '$lib/sse';
 
   let chatBound = true;
 
@@ -13,6 +14,8 @@
     const tg = getTg();
     const startParam = tg?.initDataUnsafe?.start_param;
     chatBound = params.has('chat_id') || !!startParam;
+
+    startBalanceSSE();
 
     // Deep-link в раздел: если в start_param указан роут — переходим туда.
     if ($page.route.id === '/') {
