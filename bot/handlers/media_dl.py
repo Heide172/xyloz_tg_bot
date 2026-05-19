@@ -19,6 +19,7 @@ from services.media_dl_service import (
     charge,
     download_sync,
     extract_url,
+    fetch_ig_caption,
     refund,
 )
 
@@ -86,6 +87,9 @@ async def auto_download(msg: types.Message):
         (u.first_name or "кто-то") if u else "кто-то"
     )
     caption = f"📥 от {who} · −{MEDIADL_COST}г\n{url}"
+    desc = await asyncio.to_thread(fetch_ig_caption, url)
+    if desc:
+        caption = f"{caption}\n\n{desc}"
     try:
         if len(items) == 1:
             path, mtype = items[0]
