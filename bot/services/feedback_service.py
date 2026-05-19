@@ -22,6 +22,52 @@ def default_reward(kind: str) -> int:
     return REWARD_BUG if kind == "bug" else REWARD_IDEA
 
 
+def _admin_tg_ids() -> list[int]:
+    out = []
+    for part in (os.getenv("BOT_ADMIN_IDS") or "").split(","):
+        p = part.strip()
+        if not p:
+            continue
+        try:
+            out.append(int(p))
+        except ValueError:
+            pass
+    return out
+
+
+def create_feedback(
+    user_id: int | None, chat_id, kind: str, text: str, who: str
+) -> int:
+    """Создать заявку + уведомить админов в ЛС. Возвращает id."""
+    if kind not in ("bug", "idea"):
+        kind = "idea"
+    text = (text or "").strip()[:2000]
+    session = SessionLocal()
+    try:
+        fb = Feedback(
+            user_id=user_id, chat_id=chat_id, kind=kind, text=text,
+            status="new", created_at=datetime.utcnow(),
+        )
+        session.add(fb)
+        session.commit()
+        fid = fb.id
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+    from services.social_service import send_chat_message
+
+    icon = "🐞 Баг" if kind == "bug" else "💡 Идея"
+    note = f"{icon} #{fid} от {who} (через ИИ-форму):\n\n{text}"
+    for admin_id in _admin_tg_ids():
+        try:
+            send_chat_message(admin_id, note)
+        except Exception:
+            logger.warning("feedback notify failed for admin %s", admin_id)
+    return fid
+
+
 def list_open(limit: int = 20) -> list[dict]:
     """Незакрытые заявки (new|seen), новые сверху."""
     session = SessionLocal()

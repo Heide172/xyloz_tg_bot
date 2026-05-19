@@ -102,6 +102,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ kind, text })
     }),
+  feedbackAssist: (message: string) =>
+    request<{
+      reply: string;
+      registered: { id: number; kind: 'bug' | 'idea' } | null;
+      degraded?: boolean;
+    }>('/feedback/assist', {
+      method: 'POST',
+      body: JSON.stringify({ message })
+    }),
   gachaCollection: () => request<any>('/gacha/collection'),
   gachaRoll: (count: number) =>
     request<any>('/gacha/roll', { method: 'POST', body: JSON.stringify({ count }) }),
