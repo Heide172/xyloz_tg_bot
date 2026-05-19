@@ -85,9 +85,6 @@ export interface FarmState {
   auto_rate_cps: number;
   next_tap_cost: number;
   next_auto_cost: number;
-  daily_converted: number;
-  daily_cap: number;
-  daily_remaining: number;
   bank_balance: number;
   user_balance: number;
   lifetime_cp: number;

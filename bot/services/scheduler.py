@@ -13,6 +13,8 @@ from services.digest_service import (
 )
 from services.embed_worker import embed_pending_once
 from services.external_markets import auto_resolve_external
+from services.market_service import TICK_MIN as MARKET_TICK_MIN
+from services.market_service import recover_and_snapshot_all
 from services.markets_service import auto_close_expired
 from services.nlp_classifier import classify_pending_once
 from services.nominations_service import run_daily_nominations
@@ -124,6 +126,13 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         _expire_tag_rentals_job,
         trigger=IntervalTrigger(minutes=5),
         id="tag_rentals_expire",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        recover_and_snapshot_all,
+        trigger=IntervalTrigger(minutes=max(1, int(MARKET_TICK_MIN))),
+        id="market_recover_tick",
         coalesce=True,
         max_instances=1,
     )

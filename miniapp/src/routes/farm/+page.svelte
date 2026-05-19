@@ -46,12 +46,12 @@
   $: displayCp = state
     ? state.cp_balance + pendingTaps * state.tap_level + autoAccrued
     : 0;
-  $: maxConvert = state
-    ? Math.max(
-        0,
-        Math.min(state.daily_remaining, Math.floor(state.cp_balance / state.cp_per_hryvnia))
-      )
-    : 0;
+  // Теперь продаём cp на AMM-рынок (без дневного лимита).
+  $: maxConvert = state ? Math.max(0, Math.floor(state.cp_balance)) : 0;
+  $: estHryvnia =
+    state && convertAmount > 0
+      ? Math.floor(convertAmount / Math.max(1, state.cp_per_hryvnia))
+      : 0;
 
   // Реактивно: меняется при смене heroFrame → Svelte перерисует <img>.
   $: heroSrcUrl = heroImgOk[heroFrame] ? `/farm/heroine_${heroFrame}.png` : '';
@@ -181,10 +181,13 @@
   async function convert() {
     if (!state || convertAmount <= 0) return;
     await flushTaps();
+    const before = state.user_balance;
     try {
-      syncState(await api.farmConvert(convertAmount));
+      const ns = await api.farmConvert(convertAmount);
+      const got = ns.user_balance - before;
+      syncState(ns);
       haptic('success');
-      showAlert(`+${convertAmount} гривен на баланс`);
+      showAlert(`Продано ${convertAmount} cp → +${got} гривен`);
     } catch (e: any) {
       showAlert(e?.message ?? 'Не получилось');
       haptic('error');
@@ -312,24 +315,24 @@
 
   <!-- Конвертация -->
   <details class="section" bind:open={convertOpen}>
-    <summary>Конвертация в гривны</summary>
+    <summary>Продать cp на рынок</summary>
     <div class="convert">
       <div class="muted small" style="margin-bottom: 8px;">
-        Курс: {state.cp_per_hryvnia} cp → 1 гривна (растёт с эмиссией чата).
-        Лимит: {state.daily_remaining}/{state.daily_cap} в сутки.
+        Рыночный курс: ~{state.cp_per_hryvnia} cp за 1 гривну. Чем больше
+        продаёшь — тем хуже цена (slippage), курс восстанавливается со временем.
       </div>
       <div class="convert-row">
-        <input type="number" min="1" max={maxConvert} step="10" bind:value={convertAmount} />
-        <span class="muted small">гривен</span>
-        <button class="preset" on:click={() => (convertAmount = Math.min(10, maxConvert))}>10</button>
-        <button class="preset" on:click={() => (convertAmount = Math.min(100, maxConvert))}>100</button>
+        <input type="number" min="1" max={maxConvert} step="100" bind:value={convertAmount} />
+        <span class="muted small">cp</span>
+        <button class="preset" on:click={() => (convertAmount = Math.min(1000, maxConvert))}>1k</button>
+        <button class="preset" on:click={() => (convertAmount = Math.min(10000, maxConvert))}>10k</button>
         <button class="preset" on:click={() => (convertAmount = maxConvert)}>max</button>
       </div>
       <div class="muted small" style="margin: 6px 0 10px;">
-        Стоимость: {fmtCp((convertAmount || 0) * state.cp_per_hryvnia)} cp · max {maxConvert}
+        Продаёшь {fmtCp(convertAmount || 0)} cp · ≈{estHryvnia} гривен (до slippage)
       </div>
       <button class="play" on:click={convert} disabled={!convertAmount || convertAmount > maxConvert}>
-        Конвертировать {convertAmount} гривен
+        Продать {fmtCp(convertAmount || 0)} cp
       </button>
     </div>
   </details>

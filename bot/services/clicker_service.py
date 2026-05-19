@@ -13,13 +13,12 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import func
+from sqlalchemy import text
 
 from common.db.db import SessionLocal
 from common.logger.logger import get_logger
 from common.models.chat_bank import ChatBank
 from common.models.clicker_farm import ClickerFarm
-from common.models.economy_tx import EconomyTx
 from common.models.user_balance import UserBalance
 from services.markets_service import (
     InsufficientFunds,
@@ -33,11 +32,8 @@ from services.markets_service import (
 logger = get_logger(__name__)
 
 # Параметры (env-tunable)
-CP_PER_HRYVNIA = int(os.getenv("CLICKER_CP_PER_HRYVNIA", "100"))  # базовый курс
-# Растущий курс: на каждые MINT_RATE_SCALE эмитированных в чате гривен
-# курс +1 cp. Тормозит инфляцию — чем больше нафармили, тем дороже cp.
-MINT_RATE_SCALE = int(os.getenv("CLICKER_MINT_RATE_SCALE", "10000"))
-DAILY_CAP = int(os.getenv("CLICKER_DAILY_CAP", "10000"))        # гривен
+# Курс cp→гривна теперь задаётся AMM-рынком (services.market_service):
+# constant-product пул на чат, без подушевого дневного кэпа.
 OFFLINE_CAP_HOURS = float(os.getenv("CLICKER_OFFLINE_CAP_HOURS", "4"))
 AUTO_RATE = float(os.getenv("CLICKER_AUTO_RATE", "0.5"))         # cp/sec на level
 TAP_UPGRADE_BASE = int(os.getenv("CLICKER_TAP_UPGRADE_BASE", "50"))
@@ -120,13 +116,10 @@ class FarmState:
     auto_rate_cps: float            # текущая скорость cp/сек
     next_tap_cost: int              # сколько cp стоит следующий апгрейд тапа
     next_auto_cost: int             # сколько cp стоит следующий апгрейд автоклика
-    daily_converted: int            # сколько гривен уже вывели сегодня
-    daily_cap: int
-    daily_remaining: int
-    bank_balance: int               # сколько в банке чата (потолок конвертации)
+    bank_balance: int               # сколько в банке чата (для отображения)
     user_balance: int               # текущий баланс юзера в гривнах
     lifetime_cp: int                # для аналитики
-    cp_per_hryvnia: int
+    cp_per_hryvnia: float           # текущий спот-курс AMM (cp за 1 гривну)
     offline_cap_seconds: int
     workers: list                   # [{type, level, tier, rate_cps, next_cost, max}]
 
@@ -156,28 +149,10 @@ def _accrue_offline(session, farm: ClickerFarm, now: datetime) -> int:
     return income
 
 
-def _reset_daily_if_needed(farm: ClickerFarm, now: datetime) -> None:
-    if (now - farm.daily_window_start).total_seconds() >= 86400:
-        farm.daily_window_start = now
-        farm.daily_converted = 0
-
-
-def _total_minted(session, chat_id: int) -> int:
-    """Сумма всех эмитированных гривен в чате (kind=clicker_mint)."""
-    return int(
-        session.query(func.coalesce(func.sum(EconomyTx.amount), 0))
-        .filter(EconomyTx.chat_id == chat_id, EconomyTx.kind == "clicker_mint")
-        .scalar()
-        or 0
-    )
-
-
-def _current_rate(session, chat_id: int) -> int:
-    """Растущий курс: base + total_minted // scale."""
-    return CP_PER_HRYVNIA + _total_minted(session, chat_id) // MINT_RATE_SCALE
-
-
 def _to_state(session, farm: ClickerFarm, bank: ChatBank, user_bal: UserBalance) -> FarmState:
+    from services.market_service import get_or_create_pool, spot_rate
+
+    pool = get_or_create_pool(session, farm.chat_id)
     return FarmState(
         cp_balance=int(farm.cp_balance),
         tap_level=int(farm.tap_level),
@@ -185,13 +160,10 @@ def _to_state(session, farm: ClickerFarm, bank: ChatBank, user_bal: UserBalance)
         auto_rate_cps=round(_passive_rate(session, farm), 3),
         next_tap_cost=_upgrade_cost(TAP_UPGRADE_BASE, farm.tap_level - 1) if farm.tap_level < MAX_TAP_LEVEL else 0,
         next_auto_cost=_upgrade_cost(AUTO_UPGRADE_BASE, farm.auto_level) if farm.auto_level < MAX_AUTO_LEVEL else 0,
-        daily_converted=int(farm.daily_converted),
-        daily_cap=DAILY_CAP,
-        daily_remaining=max(0, DAILY_CAP - int(farm.daily_converted)),
         bank_balance=int(bank.balance),
         user_balance=int(user_bal.balance),
         lifetime_cp=int(farm.lifetime_cp),
-        cp_per_hryvnia=_current_rate(session, farm.chat_id),
+        cp_per_hryvnia=round(spot_rate(pool), 2),
         offline_cap_seconds=int(OFFLINE_CAP_HOURS * 3600),
         workers=[
             {
@@ -233,7 +205,6 @@ def get_state_sync(user_id: int, chat_id: int) -> FarmState:
         now = datetime.utcnow()
         farm = _get_or_create_farm(session, user_id, chat_id)
         _accrue_offline(session, farm, now)
-        _reset_daily_if_needed(farm, now)
         farm.updated_at = now
         bank = _get_or_create_bank(session, chat_id)
         user_bal = _get_or_create_balance(session, user_id, chat_id)
@@ -262,7 +233,6 @@ def tap_sync(user_id: int, chat_id: int, count: int, elapsed_ms: int) -> FarmSta
         now = datetime.utcnow()
         farm = _get_or_create_farm(session, user_id, chat_id)
         _accrue_offline(session, farm, now)
-        _reset_daily_if_needed(farm, now)
         gain = int(accepted * farm.tap_level * _heroine_mult(session, farm))
         farm.cp_balance += gain
         farm.lifetime_cp += gain
@@ -364,8 +334,53 @@ def hire_worker_sync(user_id: int, chat_id: int, wtype: str) -> FarmState:
         session.close()
 
 
-def convert_sync(user_id: int, chat_id: int, hryvnia_amount: int) -> FarmState:
-    """Списать cp = hryvnia × 100, списать гривны с банка чата, начислить юзеру."""
+def convert_sync(user_id: int, chat_id: int, cp_amount: int) -> FarmState:
+    """Продать cp на AMM-рынок чата → гривны юзеру (со slippage).
+    Курс и проскальзывание считает services.market_service. Без
+    дневного кэпа — рынок сам себе тормоз."""
+    from services.market_service import sell_cp
+
+    if cp_amount <= 0:
+        raise InvalidArgument("cp должно быть > 0")
+    session = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        farm = _get_or_create_farm(session, user_id, chat_id)
+        _accrue_offline(session, farm, now)
+
+        if farm.cp_balance < cp_amount:
+            raise InsufficientFunds(
+                f"Нужно {cp_amount} cp, у тебя {farm.cp_balance}"
+            )
+
+        hryvnia_out = sell_cp(session, chat_id, cp_amount)
+
+        farm.cp_balance -= cp_amount
+        farm.updated_at = now
+        user_bal = _get_or_create_balance(session, user_id, chat_id)
+        user_bal.balance += hryvnia_out
+        user_bal.updated_at = now
+        bank = _get_or_create_bank(session, chat_id)  # для отображения в стейте
+
+        _log_tx(session, user_id, chat_id, hryvnia_out,
+                kind="clicker_mint",
+                note=f"sell {cp_amount} cp -> {hryvnia_out} hryvnia (AMM)")
+
+        state = _to_state(session, farm, bank, user_bal)
+        session.commit()
+        return state
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def buy_cp_sync(user_id: int, chat_id: int, hryvnia_amount: int) -> FarmState:
+    """Обратный поток: купить cp за гривны юзера через AMM (давит курс
+    вверх). Фундамент-примитив под будущую гачу/ККИ и арбитраж."""
+    from services.market_service import buy_cp
+
     if hryvnia_amount <= 0:
         raise InvalidArgument("Сумма должна быть > 0")
     session = SessionLocal()
@@ -373,39 +388,63 @@ def convert_sync(user_id: int, chat_id: int, hryvnia_amount: int) -> FarmState:
         now = datetime.utcnow()
         farm = _get_or_create_farm(session, user_id, chat_id)
         _accrue_offline(session, farm, now)
-        _reset_daily_if_needed(farm, now)
 
-        remaining = DAILY_CAP - farm.daily_converted
-        if hryvnia_amount > remaining:
-            raise InvalidArgument(
-                f"Дневной кэп: можешь вывести ещё {remaining} гривен сегодня"
-            )
-
-        rate = _current_rate(session, chat_id)
-        cp_cost = hryvnia_amount * rate
-        if farm.cp_balance < cp_cost:
-            raise InsufficientFunds(
-                f"Нужно {cp_cost} cp (курс {rate} cp/гривна), у тебя {farm.cp_balance}"
-            )
-
-        # Эмиссия: гривны создаются (не из банка чата) — приток в экономику.
-        farm.cp_balance -= cp_cost
-        farm.daily_converted += hryvnia_amount
-        farm.updated_at = now
         user_bal = _get_or_create_balance(session, user_id, chat_id)
-        user_bal.balance += hryvnia_amount
-        user_bal.updated_at = now
-        bank = _get_or_create_bank(session, chat_id)  # только для отображения в стейте
+        if user_bal.balance < hryvnia_amount:
+            raise InsufficientFunds(
+                f"Нужно {hryvnia_amount} гривен, у тебя {user_bal.balance}"
+            )
 
-        _log_tx(session, user_id, chat_id, hryvnia_amount,
-                kind="clicker_mint",
-                note=f"{cp_cost} cp -> {hryvnia_amount} hryvnia (эмиссия)")
+        cp_out = buy_cp(session, chat_id, hryvnia_amount)
+
+        user_bal.balance -= hryvnia_amount
+        user_bal.updated_at = now
+        farm.cp_balance += cp_out
+        farm.lifetime_cp += cp_out
+        farm.updated_at = now
+        bank = _get_or_create_bank(session, chat_id)
+
+        _log_tx(session, user_id, chat_id, -hryvnia_amount,
+                kind="clicker_buy_cp",
+                note=f"buy {cp_out} cp for {hryvnia_amount} hryvnia (AMM)")
 
         state = _to_state(session, farm, bank, user_bal)
         session.commit()
         return state
     except Exception:
         session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def wipe_farm_sync(chat_id: int | None = None) -> dict:
+    """РУЧНОЙ вайп фермы: сносит cp/воркеров/уровни, гача-коллекцию,
+    AMM-пул и историю цен. chat_id=None → все чаты. Состояние
+    пересоздаётся лениво с дефолтами (пул — с якоря).
+    НЕ вызывается автоматически; только админом."""
+    session = SessionLocal()
+    try:
+        scope = "" if chat_id is None else " WHERE chat_id = :c"
+        params = {} if chat_id is None else {"c": chat_id}
+        counts = {}
+        for tbl in (
+            "clicker_farms",
+            "gacha_collection",
+            "clicker_market_pool",
+            "clicker_market_price",
+        ):
+            res = session.execute(text(f"DELETE FROM {tbl}{scope}"), params)
+            counts[tbl] = res.rowcount or 0
+        session.commit()
+        logger.warning(
+            "FARM WIPE chat=%s counts=%s",
+            "ALL" if chat_id is None else chat_id, counts,
+        )
+        return {"chat_id": chat_id, "deleted": counts}
+    except Exception:
+        session.rollback()
+        logger.exception("farm wipe failed chat=%s", chat_id)
         raise
     finally:
         session.close()

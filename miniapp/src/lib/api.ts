@@ -243,11 +243,24 @@ export const api = {
   farmUpgradeAuto: () => request<FarmState>('/farm/upgrade/auto', { method: 'POST' }),
   farmHire: (wtype: string) =>
     request<FarmState>(`/farm/hire/${wtype}`, { method: 'POST' }),
-  farmConvert: (hryvniaAmount: number) =>
+  farmConvert: (cpAmount: number) =>
     request<FarmState>('/farm/convert', {
+      method: 'POST',
+      body: JSON.stringify({ cp_amount: cpAmount })
+    }),
+  farmBuyCp: (hryvniaAmount: number) =>
+    request<FarmState>('/farm/buy', {
       method: 'POST',
       body: JSON.stringify({ hryvnia_amount: hryvniaAmount })
     }),
+  farmMarket: () =>
+    request<{
+      rate: number;
+      r_cp: number;
+      r_h: number;
+      anchor_rate: number;
+      history: { ts: string; rate: number }[];
+    }>('/farm/market'),
 
   history: (limit = 50, offset = 0) =>
     request<{ items: HistoryItem[]; has_more: boolean }>(

@@ -10,6 +10,7 @@ from services.clicker_service import (
     InsufficientFunds,
     InvalidArgument,
     MarketError,
+    buy_cp_sync,
     convert_sync,
     get_state_sync,
     hire_worker_sync,
@@ -17,6 +18,7 @@ from services.clicker_service import (
     upgrade_auto_sync,
     upgrade_tap_sync,
 )
+from services.market_service import price_history, quote_sync
 
 router = APIRouter()
 
@@ -28,13 +30,10 @@ class FarmStateResp(BaseModel):
     auto_rate_cps: float
     next_tap_cost: int
     next_auto_cost: int
-    daily_converted: int
-    daily_cap: int
-    daily_remaining: int
     bank_balance: int
     user_balance: int
     lifetime_cp: int
-    cp_per_hryvnia: int
+    cp_per_hryvnia: float
     offline_cap_seconds: int
     workers: list = []
 
@@ -48,7 +47,11 @@ class TapReq(BaseModel):
 
 
 class ConvertReq(BaseModel):
-    hryvnia_amount: int = Field(ge=1, le=10_000)
+    cp_amount: int = Field(ge=1)
+
+
+class BuyReq(BaseModel):
+    hryvnia_amount: int = Field(ge=1)
 
 
 def _map_err(e: Exception) -> HTTPException:
@@ -118,10 +121,35 @@ async def hire_worker(wtype: str, auth: TgWebAppAuth = Depends(require_auth)):
 
 @router.post("/convert", response_model=FarmStateResp)
 async def convert(req: ConvertReq, auth: TgWebAppAuth = Depends(require_auth)):
+    """Продать cp на AMM-рынок → гривны (со slippage)."""
     chat_id = await require_chat_membership(auth)
     user_id = ensure_db_user(auth)
     try:
-        s = await asyncio.to_thread(convert_sync, user_id, chat_id, req.hryvnia_amount)
+        s = await asyncio.to_thread(convert_sync, user_id, chat_id, req.cp_amount)
         return FarmStateResp(**s.asdict())
+    except Exception as e:
+        raise _map_err(e)
+
+
+@router.post("/buy", response_model=FarmStateResp)
+async def buy(req: BuyReq, auth: TgWebAppAuth = Depends(require_auth)):
+    """Обратный поток: купить cp за гривны через AMM (давит курс вверх)."""
+    chat_id = await require_chat_membership(auth)
+    user_id = ensure_db_user(auth)
+    try:
+        s = await asyncio.to_thread(buy_cp_sync, user_id, chat_id, req.hryvnia_amount)
+        return FarmStateResp(**s.asdict())
+    except Exception as e:
+        raise _map_err(e)
+
+
+@router.get("/market")
+async def market_quote(auth: TgWebAppAuth = Depends(require_auth)):
+    chat_id = await require_chat_membership(auth)
+    ensure_db_user(auth)
+    try:
+        q = await asyncio.to_thread(quote_sync, chat_id)
+        hist = await asyncio.to_thread(price_history, chat_id, 200)
+        return {**q, "history": hist}
     except Exception as e:
         raise _map_err(e)
