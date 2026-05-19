@@ -79,15 +79,23 @@ async def auto_download(msg: types.Message):
         await progress.edit_text(f"{err or 'Не удалось скачать'} (деньги возвращены).")
         return
 
-    # Кто скинул — для подписи (исходное сообщение со ссылкой удалим,
-    # поэтому ссылку на оригинал кладём в подпись бота).
+    # Если в сообщении только ссылка — удалим его (чистим мусор),
+    # ссылку сохраним в подписи бота. Если есть свой текст —
+    # НЕ трогаем сообщение (не затираем слова автора), видео шлём
+    # ответом на него.
+    rest = (msg.text or "").replace(url, "").strip()
+    keep_original = len(rest) >= 3
+
     u = msg.from_user
     who = ("@" + u.username) if u and u.username else (
         (u.first_name or "кто-то") if u else "кто-то"
     )
-    caption = f"📥 от {who} · −{MEDIADL_COST}г\n{url}"
+    caption = f"📥 от {who} · −{MEDIADL_COST}г"
+    if not keep_original:
+        caption = f"{caption}\n{url}"
     if desc:
         caption = f"{caption}\n\n{desc}"
+    reply_to = msg.message_id if keep_original else None
     try:
         if len(items) == 1:
             path, mtype = items[0]
@@ -96,12 +104,14 @@ async def auto_download(msg: types.Message):
                     chat_id=msg.chat.id,
                     photo=FSInputFile(path),
                     caption=caption,
+                    reply_to_message_id=reply_to,
                 )
             else:
                 await msg.bot.send_video(
                     chat_id=msg.chat.id,
                     video=FSInputFile(path),
                     caption=caption,
+                    reply_to_message_id=reply_to,
                 )
         else:
             media = []
@@ -112,12 +122,17 @@ async def auto_download(msg: types.Message):
                     media.append(InputMediaPhoto(media=file, caption=cap))
                 else:
                     media.append(InputMediaVideo(media=file, caption=cap))
-            await msg.bot.send_media_group(chat_id=msg.chat.id, media=media)
-        # Удаляем исходное сообщение со ссылкой + прогресс
-        try:
-            await msg.delete()
-        except Exception:
-            pass
+            await msg.bot.send_media_group(
+                chat_id=msg.chat.id, media=media,
+                reply_to_message_id=reply_to,
+            )
+        # Голую ссылку — удаляем (чистим мусор). Сообщение с текстом
+        # автора не трогаем.
+        if not keep_original:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
         await progress.delete()
     except Exception:
         logger.exception("media_dl send failed")
