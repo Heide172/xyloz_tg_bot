@@ -193,11 +193,14 @@ async def gather_status() -> dict:
         check_nlp(),
         check_opencode(),
     )
-    coverage, tables, scheduler_jobs, model = await asyncio.gather(
+    from common.metrics import snapshot as perf_snapshot
+
+    coverage, tables, scheduler_jobs, model, perf = await asyncio.gather(
         asyncio.to_thread(get_coverage_stats),
         asyncio.to_thread(get_table_sizes),
         asyncio.to_thread(get_scheduler_jobs),
         asyncio.to_thread(get_current_model),
+        asyncio.to_thread(perf_snapshot, 12),
     )
     return {
         "build": get_build_info(),
@@ -207,4 +210,5 @@ async def gather_status() -> dict:
         "coverage": coverage,
         "tables": tables,
         "scheduler": scheduler_jobs,
+        "perf": perf,
     }

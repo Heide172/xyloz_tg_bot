@@ -201,6 +201,19 @@ async def markets_cancel(market_id: int, auth: TgWebAppAuth = Depends(require_au
 # (chat_id хранится в строке feedback) — логика в feedback_service.
 
 
+@router.get("/metrics")
+async def perf_metrics(
+    reset: int = 0, auth: TgWebAppAuth = Depends(require_auth)
+):
+    _ensure_admin(auth)
+    from common.metrics import reset as m_reset
+    from common.metrics import snapshot
+
+    if reset:
+        await asyncio.to_thread(m_reset)
+    return await asyncio.to_thread(snapshot, 30)
+
+
 @router.get("/feedback")
 async def feedback_list(auth: TgWebAppAuth = Depends(require_auth)):
     _ensure_admin(auth)

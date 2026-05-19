@@ -48,6 +48,43 @@ app.add_middleware(
 )
 
 
+_pool_last = [0.0]
+
+
+@app.middleware("http")
+async def _perf_mw(request, call_next):
+    import time as _t
+
+    t0 = _t.perf_counter()
+    status = 500
+    try:
+        resp = await call_next(request)
+        status = resp.status_code
+        return resp
+    finally:
+        dur_ms = (_t.perf_counter() - t0) * 1000.0
+        try:
+            from common.metrics import record_pool, record_request
+
+            r = request.scope.get("route")
+            route = getattr(r, "path", None) or request.url.path
+            record_request(route, request.method, status, dur_ms)
+            now = _t.time()
+            if now - _pool_last[0] > 2:  # пул пишем не чаще раза в 2с/воркер
+                _pool_last[0] = now
+                from common.db.db import engine
+
+                pl = engine.pool
+                record_pool(
+                    os.getpid(),
+                    getattr(pl, "size", lambda: 0)(),
+                    getattr(pl, "checkedout", lambda: 0)(),
+                    getattr(pl, "overflow", lambda: 0)(),
+                )
+        except Exception:
+            pass
+
+
 @app.get("/")
 def root() -> dict:
     return {"service": app.title, "version": app.version, "docs": "/docs"}

@@ -104,6 +104,29 @@ def _format_status(data: dict) -> str:
     lines.append("[Топ таблиц по размеру]")
     for t in data["tables"]:
         lines.append(f"  {t['name']:<28} {fmt_bytes(t['size_bytes']):>10} ({t['rows']} rows)")
+    lines.append("")
+
+    perf = data.get("perf") or {}
+    lines.append("[API perf]")
+    if not perf.get("enabled"):
+        lines.append("  (метрики недоступны — нет Redis или пусто)")
+    else:
+        pool = perf.get("pool") or {}
+        if pool:
+            lines.append("  db-pool (co/size+ovf по воркерам): " +
+                         " ".join(f"{k}={v}" for k, v in pool.items()))
+        rows = perf.get("routes") or []
+        if not rows:
+            lines.append("  (запросов ещё не было)")
+        for r in rows:
+            errs = ""
+            if r["err5"] or r["err4"]:
+                errs = f" err {r['err4']}/4xx {r['err5']}/5xx"
+            lines.append(
+                f"  {r['method']:<4}{r['route'][:32]:<33} "
+                f"n={r['n']:<5} avg={r['avg_ms']:.0f} "
+                f"p50{r['p50']} p95{r['p95']} max={r['max_ms']:.0f}{errs}"
+            )
 
     return "\n".join(lines)
 
