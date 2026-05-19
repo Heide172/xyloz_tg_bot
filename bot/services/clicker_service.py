@@ -150,9 +150,9 @@ def _accrue_offline(session, farm: ClickerFarm, now: datetime) -> int:
 
 
 def _to_state(session, farm: ClickerFarm, bank: ChatBank, user_bal: UserBalance) -> FarmState:
-    from services.market_service import get_or_create_pool, spot_rate
+    from services.market_service import pool_snapshot, spot_rate_value
 
-    pool = get_or_create_pool(session, farm.chat_id)
+    _r_cp, _r_h = pool_snapshot(session, farm.chat_id)
     return FarmState(
         cp_balance=int(farm.cp_balance),
         tap_level=int(farm.tap_level),
@@ -163,7 +163,7 @@ def _to_state(session, farm: ClickerFarm, bank: ChatBank, user_bal: UserBalance)
         bank_balance=int(bank.balance),
         user_balance=int(user_bal.balance),
         lifetime_cp=int(farm.lifetime_cp),
-        cp_per_hryvnia=round(spot_rate(pool), 2),
+        cp_per_hryvnia=round(spot_rate_value(_r_cp, _r_h), 2),
         offline_cap_seconds=int(OFFLINE_CAP_HOURS * 3600),
         workers=[
             {

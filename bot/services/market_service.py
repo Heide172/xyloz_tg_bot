@@ -53,6 +53,24 @@ def get_or_create_pool(session, chat_id: int) -> ClickerMarketPool:
     return row
 
 
+def pool_snapshot(session, chat_id: int) -> tuple[float, float]:
+    """Резервы пула БЕЗ блокировки (read-only, не создаёт строку).
+    Нет пула → значения якоря. Использовать в read-путях (_to_state,
+    quote) — не брать FOR UPDATE на каждом чтении фермы."""
+    row = (
+        session.query(ClickerMarketPool.r_cp, ClickerMarketPool.r_h)
+        .filter(ClickerMarketPool.chat_id == chat_id)
+        .first()
+    )
+    if row:
+        return float(row[0]), float(row[1])
+    return _anchor()
+
+
+def spot_rate_value(r_cp: float, r_h: float) -> float:
+    return r_cp / r_h if r_h > 0 else float("inf")
+
+
 def spot_rate(pool: ClickerMarketPool) -> float:
     """Текущий курс: cp за 1 гривну."""
     return pool.r_cp / pool.r_h if pool.r_h > 0 else float("inf")
@@ -95,7 +113,13 @@ def buy_cp(session, chat_id: int, hryvnia: int) -> int:
 
 
 def quote(session, chat_id: int) -> dict:
-    pool = get_or_create_pool(session, chat_id)
+    r_cp, r_h = pool_snapshot(session, chat_id)
+
+    class _P:
+        pass
+
+    pool = _P()
+    pool.r_cp, pool.r_h = r_cp, r_h
     return {
         "rate": round(spot_rate(pool), 2),       # cp за гривну
         "r_cp": round(pool.r_cp, 2),
