@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import BetInput from '$lib/BetInput.svelte';
   import { api } from '$lib/api';
+  import GameRules from '$lib/GameRules.svelte';
   import { fmtCoins } from '$lib/format';
   import { haptic } from '$lib/tg';
   import type { BalanceResponse, GameResult } from '$lib/types';
@@ -241,6 +242,8 @@
     </div>
   {/if}
 </section>
+
+<GameRules game="roulette" />
 
 <style>
   .back { display: inline-block; margin-bottom: 8px; font-size: 14px; color: var(--text-muted); }

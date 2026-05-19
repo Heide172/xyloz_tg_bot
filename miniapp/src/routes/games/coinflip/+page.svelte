@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import BetInput from '$lib/BetInput.svelte';
   import { api } from '$lib/api';
+  import GameRules from '$lib/GameRules.svelte';
   import { fmtCoins } from '$lib/format';
   import { haptic } from '$lib/tg';
   import type { BalanceResponse, GameResult } from '$lib/types';
@@ -119,6 +120,8 @@
     </div>
   {/if}
 </section>
+
+<GameRules game="coinflip" />
 
 <style>
   .back {
