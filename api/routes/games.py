@@ -38,6 +38,7 @@ class DiceReq(BaseModel):
 
 class SlotsReq(BaseModel):
     bet: int = Field(ge=1)
+    idem_key: str | None = Field(default=None, max_length=40)
 
 
 class RouletteReq(BaseModel):
@@ -117,7 +118,9 @@ async def slots(req: SlotsReq, auth: TgWebAppAuth = Depends(require_auth)) -> Ga
     chat_id = await require_chat_membership(auth)
     user_id = ensure_db_user(auth)
     try:
-        r = await asyncio.to_thread(play_slots_sync, chat_id, user_id, req.bet)
+        r = await asyncio.to_thread(
+            play_slots_sync, chat_id, user_id, req.bet, req.idem_key
+        )
         return _to_resp(r)
     except Exception as e:
         raise _map_error(e)

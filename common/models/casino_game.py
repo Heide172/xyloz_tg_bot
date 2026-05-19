@@ -20,6 +20,8 @@ class CasinoGame(Base):
     state = Column(JSONB, nullable=True)             # для многоходовых (blackjack)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     finished_at = Column(DateTime, nullable=True)
+    # Идемпотентность: ретрай с тем же ключом не списывает повторно.
+    idem_key = Column(String(40), nullable=True)
 
     __table_args__ = (
         Index("idx_casino_games_user_chat", "user_id", "chat_id"),

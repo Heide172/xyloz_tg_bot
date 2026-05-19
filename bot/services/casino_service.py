@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
+
 from common.db.db import SessionLocal
 from common.logger.logger import get_logger
 from common.models.casino_game import CasinoGame
@@ -70,6 +72,24 @@ def _validate_bet(bet: int) -> None:
         raise InvalidArgument(f"Максимальная ставка: {MAX_BET}")
 
 
+def _result_from_game(session, cg: CasinoGame) -> GameResult:
+    """Собрать GameResult из уже сыгранной партии (для идемпотентного
+    повтора). *_after берём текущими — спин уже учтён в балансе."""
+    bal = _get_or_create_balance(session, cg.user_id, cg.chat_id)
+    bank = _get_or_create_bank(session, cg.chat_id)
+    return GameResult(
+        game_id=cg.id,
+        game=cg.game,
+        outcome=cg.outcome,
+        bet=cg.bet,
+        payout=cg.payout,
+        net=cg.payout - cg.bet,
+        user_balance_after=bal.balance,
+        bank_after=bank.balance,
+        details=cg.state or {},
+    )
+
+
 def _settle_sync(
     chat_id: int,
     user_id: int,
@@ -79,6 +99,7 @@ def _settle_sync(
     payout: int,
     details: dict,
     max_potential_payout: int,
+    idem_key: str | None = None,
 ) -> GameResult:
     """Атомарно: списать ставку, выплатить (если есть), создать CasinoGame + tx-журнал.
 
@@ -87,6 +108,20 @@ def _settle_sync(
     """
     session = SessionLocal()
     try:
+        # Идемпотентность: тот же ключ → возвращаем уже сыгранную партию
+        # без повторного списания (ретрай после потери ответа).
+        if idem_key:
+            prev = (
+                session.query(CasinoGame)
+                .filter(
+                    CasinoGame.user_id == user_id,
+                    CasinoGame.idem_key == idem_key,
+                )
+                .first()
+            )
+            if prev is not None:
+                return _result_from_game(session, prev)
+
         bal = _get_or_create_balance(session, user_id, chat_id)
         if bal.balance < bet:
             raise InsufficientFunds(
@@ -115,6 +150,7 @@ def _settle_sync(
             outcome=outcome,
             state=details,
             finished_at=datetime.utcnow(),
+            idem_key=idem_key,
         )
         session.add(cg)
         session.flush()
@@ -146,6 +182,25 @@ def _settle_sync(
             bank_after=bank.balance,
             details=details,
         )
+    except IntegrityError:
+        # Гонка: параллельный запрос с тем же idem_key уже сыграл.
+        session.rollback()
+        if idem_key:
+            s2 = SessionLocal()
+            try:
+                prev = (
+                    s2.query(CasinoGame)
+                    .filter(
+                        CasinoGame.user_id == user_id,
+                        CasinoGame.idem_key == idem_key,
+                    )
+                    .first()
+                )
+                if prev is not None:
+                    return _result_from_game(s2, prev)
+            finally:
+                s2.close()
+        raise
     except Exception:
         session.rollback()
         raise
@@ -270,7 +325,9 @@ def _count_scatter(grid: list[list[str]]) -> int:
     return sum(1 for reel in grid for s in reel if s == "scatter")
 
 
-def play_slots_sync(chat_id: int, user_id: int, bet: int) -> GameResult:
+def play_slots_sync(
+    chat_id: int, user_id: int, bet: int, idem_key: str | None = None
+) -> GameResult:
     _validate_bet(bet)
     line_bet = bet / 10.0
 
@@ -308,7 +365,10 @@ def play_slots_sync(chat_id: int, user_id: int, bet: int) -> GameResult:
     # недостижим и заблокировал бы игру). Если выпадет джекпот больше банка —
     # _settle_sync сам лимитирует фактическую выплату остатком банка.
     max_potential = bet * 50
-    return _settle_sync(chat_id, user_id, "slots", bet, outcome, total_payout, details, max_potential)
+    return _settle_sync(
+        chat_id, user_id, "slots", bet, outcome, total_payout, details,
+        max_potential, idem_key=idem_key,
+    )
 
 
 # ---------------- ROULETTE ----------------

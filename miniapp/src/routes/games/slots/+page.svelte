@@ -172,6 +172,19 @@
     displayWin = target;
   }
 
+  // Идемпотентность: ключ держим, пока спин не подтверждён. Если
+  // ответ потерялся (редеплой) — повтор с тем же ключом вернёт тот
+  // же исход без второго списания.
+  let pendingIdem: string | null = null;
+
+  function newIdem(): string {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+  }
+
   async function play() {
     if (busy) return;
     ensureAudio();
@@ -184,8 +197,10 @@
     fsActive = false;
     winCells = new Set();
 
+    if (!pendingIdem) pendingIdem = newIdem();
     try {
-      const r = await api.slots(amount);
+      const r = await api.slots(amount, pendingIdem);
+      pendingIdem = null; // подтверждено — следующий спин новый
       const d = r.details;
       await spinReels(d.grid as Sym[][]);
       await new Promise((res) => setTimeout(res, 150)); // дать transition устаканиться
@@ -227,7 +242,12 @@
         haptic('error');
       }
     } catch (e: any) {
-      err = e?.message ?? 'Ошибка';
+      // pendingIdem НЕ сбрасываем: повторное «Spin» доиграет этот же
+      // спин (или вернёт уже сыгранный) без двойного списания.
+      err = pendingIdem
+        ? 'Связь прервалась. Нажми Spin ещё раз — спишется один раз, ' +
+          'покажу реальный результат.'
+        : (e?.message ?? 'Ошибка');
       haptic('error');
     } finally {
       busy = false;

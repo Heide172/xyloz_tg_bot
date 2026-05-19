@@ -227,10 +227,10 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ bet, mode, threshold })
     }),
-  slots: (bet: number) =>
+  slots: (bet: number, idemKey?: string) =>
     request<GameResult>('/games/slots', {
       method: 'POST',
-      body: JSON.stringify({ bet })
+      body: JSON.stringify({ bet, idem_key: idemKey })
     }),
   roulette: (bet: number, bet_type: string, value: string | null) =>
     request<GameResult>('/games/roulette', {
