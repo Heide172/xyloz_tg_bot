@@ -70,6 +70,46 @@
       ? market.rate / market.anchor_rate
       : 1;
 
+  // Лестница котировок: репрезентативные размеры от баланса.
+  $: ladder = (() => {
+    if (!market || maxConvert <= 0) return [];
+    const cand = [1000, 10000, 100000, Math.floor(maxConvert * 0.25), maxConvert];
+    const seen = new Set<number>();
+    const out: { cp: number; h: number; eff: number; slip: number }[] = [];
+    for (const c0 of cand) {
+      const cp = Math.min(maxConvert, Math.max(1, Math.floor(c0)));
+      if (cp <= 0 || seen.has(cp)) continue;
+      seen.add(cp);
+      const h = ammOut(cp);
+      const eff = h > 0 ? cp / h : 0;
+      const slip = market.rate > 0 && eff > 0
+        ? Math.max(0, (eff / market.rate - 1) * 100) : 0;
+      out.push({ cp, h, eff, slip });
+    }
+    return out.sort((a, b) => a.cp - b.cp);
+  })();
+
+  // Кривая price-impact: x = cp продано (0..maxConvert), y = ₴.
+  const IW = 100, IH = 44, IP = 3;
+  $: impact = (() => {
+    if (!market || maxConvert <= 0) return null;
+    const N = 48;
+    const ys: number[] = [];
+    for (let i = 0; i <= N; i++) ys.push(ammOut((i / N) * maxConvert));
+    const ymax = Math.max(ys[ys.length - 1], 1);
+    const X = (i: number) => IP + (i / N) * (IW - 2 * IP);
+    const Y = (v: number) => IH - IP - (v / ymax) * (IH - 2 * IP);
+    const pts = ys.map((v, i) => `${X(i).toFixed(2)},${Y(v).toFixed(2)}`);
+    const cur = Math.min(maxConvert, Math.max(0, convertAmount || 0));
+    return {
+      line: 'M' + pts.join(' L'),
+      area: `M${X(0).toFixed(2)},${IH} L` + pts.join(' L') +
+            ` L${X(N).toFixed(2)},${IH} Z`,
+      mx: IP + (cur / maxConvert) * (IW - 2 * IP),
+      my: IH - IP - (ammOut(cur) / ymax) * (IH - 2 * IP)
+    };
+  })();
+
   // Биржевой график (TradingView lightweight-charts), client-only.
   let chartEl: HTMLDivElement | null = null;
   let _chart: any = null;
@@ -458,6 +498,46 @@
         <button class="preset" on:click={() => (convertAmount = Math.min(10000, maxConvert))}>10k</button>
         <button class="preset" on:click={() => (convertAmount = maxConvert)}>max</button>
       </div>
+      {#if impact && ladder.length}
+        <div class="impact">
+          <div class="muted small" style="margin: 8px 0 4px;">
+            Чем больше продаёшь за раз — тем хуже курс (price impact):
+          </div>
+          <svg
+            class="impact-svg"
+            viewBox="0 0 {IW} {IH}"
+            preserveAspectRatio="none"
+          >
+            <path d={impact.area} class="ia" />
+            <path d={impact.line} class="il" />
+            <line
+              x1={impact.mx}
+              y1="0"
+              x2={impact.mx}
+              y2={IH}
+              class="iguide"
+            />
+            <circle cx={impact.mx} cy={impact.my} r="1.6" class="idot" />
+          </svg>
+          <div class="ladder">
+            {#each ladder as r}
+              <button
+                class="lrow"
+                class:cur={r.cp === Math.min(maxConvert, convertAmount)}
+                on:click={() => (convertAmount = r.cp)}
+              >
+                <span>{fmtCp(r.cp)} cp</span>
+                <span><b>{r.h.toLocaleString()} ₴</b></span>
+                <span class="muted small"
+                  >{Math.round(r.eff).toLocaleString()} cp/₴{r.slip >= 0.5
+                    ? ` · −${r.slip.toFixed(0)}%`
+                    : ''}</span
+                >
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
       <div class="getline" style="margin: 8px 0 10px;">
         Получишь ≈ <b>{estHryvnia.toLocaleString()} ₴</b>
         <span class="muted small">
@@ -696,6 +776,31 @@
   .chart-wrap { margin-bottom: 10px; }
   .chart-cap { margin: 2px 0 4px; }
   .chart { width: 100%; height: 160px; }
+  .impact { margin-bottom: 6px; }
+  .impact-svg {
+    width: 100%; height: 72px; display: block;
+    background: rgba(127, 127, 127, 0.06); border-radius: 8px;
+  }
+  .impact-svg .ia { fill: var(--accent, #4aa8ff); opacity: 0.14; }
+  .impact-svg .il {
+    fill: none; stroke: var(--accent, #4aa8ff);
+    stroke-width: 1.4; vector-effect: non-scaling-stroke;
+  }
+  .impact-svg .iguide {
+    stroke: var(--text-muted, #8a8f98); stroke-width: 0.6;
+    stroke-dasharray: 2 2; opacity: 0.6;
+  }
+  .impact-svg .idot { fill: var(--accent, #4aa8ff); }
+  .ladder { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+  .lrow {
+    display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px;
+    align-items: baseline; padding: 6px 8px; border-radius: 7px;
+    background: var(--bg-elev-2, rgba(127, 127, 127, 0.08));
+    border: 1px solid transparent; color: var(--text); cursor: pointer;
+    font-size: 13px; text-align: left;
+  }
+  .lrow span:last-child { text-align: right; }
+  .lrow.cur { border-color: var(--accent, #4aa8ff); }
   .getline { font-size: 15px; }
   .getline b { font-size: 17px; }
   .convert-row {
