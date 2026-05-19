@@ -1,6 +1,7 @@
 import { getChatId, getInitData } from './tg';
 import { seedFromMe, setBalance, sniffBalance } from './balance';
 import { track } from './analytics';
+import { isDownStatus, markDown, markUp } from './service';
 import type {
   BalanceResponse,
   FarmState,
@@ -61,10 +62,19 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     url.searchParams.set('chat_id', String(chatId));
   }
 
-  const resp = await fetch(url.toString(), { ...init, headers });
+  let resp: Response;
+  try {
+    resp = await fetch(url.toString(), { ...init, headers });
+  } catch (e) {
+    // network error → бэкенд недоступен (редеплой / сеть)
+    markDown();
+    throw e;
+  }
   if (!resp.ok) {
+    if (isDownStatus(resp.status)) markDown();
     throw new Error(await extractError(resp));
   }
+  markUp(); // успешный ответ — сервис жив
   const data = await resp.json();
   // Глобальный кэш баланса: подхватываем из любого ответа.
   try {

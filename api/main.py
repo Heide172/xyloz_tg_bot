@@ -96,6 +96,12 @@ def health() -> dict:
     return {"status": "ok", "version": app.version}
 
 
+@app.get("/api/v1/ping")
+def ping() -> dict:
+    # Лёгкий публичный пинг для Mini App (детект «сервис ожил» после редеплоя).
+    return {"ok": True}
+
+
 app.include_router(economy_routes.router, prefix="/api/v1", tags=["economy"])
 app.include_router(markets_routes.router, prefix="/api/v1/markets", tags=["markets"])
 app.include_router(portfolio_routes.router, prefix="/api/v1/portfolio", tags=["portfolio"])
