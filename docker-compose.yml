@@ -18,6 +18,9 @@ services:
       - ./.env
 #    entrypoint: ["./scripts/wait-for-postgres.sh", "postgres"]
     command: alembic upgrade head
+    networks:
+      - default
+      - dokploy-network
 
   redis:
     image: redis:7-alpine
@@ -42,6 +45,9 @@ services:
         condition: service_started
       redis:
         condition: service_started
+    networks:
+      - default
+      - dokploy-network
 
   nlp:
     build:
@@ -76,6 +82,9 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_started
+    networks:
+      - default
+      - dokploy-network
 
   miniapp:
     build:
@@ -98,6 +107,14 @@ services:
       #   API_EXTERNAL_PROXY: "http://user:pass@host:port"
       # ПУСТУЮ строку не задавать — cobalt ломает tunnel (500).
       # внутренний сервис; наружу порт не публикуем
+
+networks:
+  default:
+  # Внешняя сеть Dokploy: в ней резолвится хост managed-БД
+  # normaldata-tgbot-644xzi (PG18+pgvector). Создаётся Dokploy,
+  # помечаем external — compose её не создаёт/не удаляет.
+  dokploy-network:
+    external: true
 
 volumes:
   hf_cache:
