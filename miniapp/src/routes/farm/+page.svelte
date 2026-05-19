@@ -48,10 +48,43 @@
     : 0;
   // Теперь продаём cp на AMM-рынок (без дневного лимита).
   $: maxConvert = state ? Math.max(0, Math.floor(state.cp_balance)) : 0;
-  $: estHryvnia =
-    state && convertAmount > 0
-      ? Math.floor(convertAmount / Math.max(1, state.cp_per_hryvnia))
+
+  // Реальная котировка AMM (constant-product) по живому пулу.
+  let market: { rate: number; r_cp: number; r_h: number; anchor_rate: number;
+                history: { ts: string; rate: number }[] } | null = null;
+
+  function ammOut(cp: number): number {
+    if (!market || cp <= 0) return 0;
+    const k = market.r_cp * market.r_h;
+    const out = market.r_h - k / (market.r_cp + cp);
+    return Math.max(0, Math.floor(out));
+  }
+  $: estHryvnia = ammOut(convertAmount);
+  // эффективная цена сделки и проскальзывание vs спот
+  $: effRate = estHryvnia > 0 ? convertAmount / estHryvnia : 0;
+  $: slipPct =
+    market && estHryvnia > 0 && market.rate > 0
+      ? Math.max(0, (effRate / market.rate - 1) * 100)
       : 0;
+  $: devalX = market && market.anchor_rate > 0
+      ? market.rate / market.anchor_rate
+      : 1;
+
+  function spark(h: { rate: number }[]): string {
+    if (!h || h.length < 2) return '';
+    const b = '▁▂▃▄▅▆▇█';
+    const v = h.slice(-32).map((x) => x.rate);
+    const lo = Math.min(...v), hi = Math.max(...v), rng = hi - lo || 1;
+    return v.map((x) => b[Math.min(7, Math.floor(((x - lo) / rng) * 7))]).join('');
+  }
+
+  async function loadMarket() {
+    try {
+      market = await api.farmMarket();
+    } catch {
+      /* не критично — деградируем к споту из state */
+    }
+  }
 
   // Реактивно: меняется при смене heroFrame → Svelte перерисует <img>.
   $: heroSrcUrl = heroImgOk[heroFrame] ? `/farm/heroine_${heroFrame}.png` : '';
@@ -66,6 +99,7 @@
       state = await api.farmState();
       lastStateAt = Date.now();
       nowTs = Date.now();
+      loadMarket();
     } catch (e: any) {
       err = e?.message ?? 'Не удалось загрузить ферму';
     } finally {
@@ -188,6 +222,7 @@
       syncState(ns);
       haptic('success');
       showAlert(`Продано ${convertAmount} cp → +${got} гривен`);
+      loadMarket(); // пул сдвинулся — обновляем котировку
     } catch (e: any) {
       showAlert(e?.message ?? 'Не получилось');
       haptic('error');
@@ -318,9 +353,30 @@
     <summary>Продать cp на рынок</summary>
     <div class="convert">
       <div class="muted small" style="margin-bottom: 8px;">
-        Рыночный курс: ~{state.cp_per_hryvnia} cp за 1 гривну. Чем больше
-        продаёшь — тем хуже цена (slippage), курс восстанавливается со временем.
+        Это рынок (AMM): продаёшь cp в общий пул, цена падает тем сильнее,
+        чем больше продаёшь за раз. Курс сам восстанавливается со временем,
+        если продажи стихают — выгоднее продавать на отскоке.
       </div>
+      {#if market}
+        <div class="quote-box">
+          <div class="qrow">
+            <span class="muted small">Спот-курс</span>
+            <b>{Math.round(market.rate).toLocaleString()} cp / 1₴</b>
+          </div>
+          <div class="qrow">
+            <span class="muted small">vs базовый ({market.anchor_rate})</span>
+            <b class:bad={devalX > 2}>
+              {devalX >= 1 ? `cp дешевле в ${devalX.toFixed(1)}×` : `cp дороже в ${(1 / devalX).toFixed(1)}×`}
+            </b>
+          </div>
+          {#if market.history && market.history.length > 1}
+            <div class="qrow">
+              <span class="muted small">История курса</span>
+              <span class="spark">{spark(market.history)}</span>
+            </div>
+          {/if}
+        </div>
+      {/if}
       <div class="convert-row">
         <input type="number" min="1" max={maxConvert} step="100" bind:value={convertAmount} />
         <span class="muted small">cp</span>
@@ -328,11 +384,14 @@
         <button class="preset" on:click={() => (convertAmount = Math.min(10000, maxConvert))}>10k</button>
         <button class="preset" on:click={() => (convertAmount = maxConvert)}>max</button>
       </div>
-      <div class="muted small" style="margin: 6px 0 10px;">
-        Продаёшь {fmtCp(convertAmount || 0)} cp · ≈{estHryvnia} гривен (до slippage)
+      <div class="getline" style="margin: 8px 0 10px;">
+        Получишь ≈ <b>{estHryvnia.toLocaleString()} ₴</b>
+        <span class="muted small">
+          (за {fmtCp(convertAmount || 0)} cp · факт. {effRate ? Math.round(effRate).toLocaleString() : '—'} cp/₴{slipPct >= 0.5 ? ` · slippage −${slipPct.toFixed(1)}%` : ''})
+        </span>
       </div>
-      <button class="play" on:click={convert} disabled={!convertAmount || convertAmount > maxConvert}>
-        Продать {fmtCp(convertAmount || 0)} cp
+      <button class="play" on:click={convert} disabled={!convertAmount || convertAmount > maxConvert || estHryvnia <= 0}>
+        Продать {fmtCp(convertAmount || 0)} cp → {estHryvnia.toLocaleString()} ₴
       </button>
     </div>
   </details>
@@ -552,6 +611,17 @@
   .w-cost { font-size: 11px; font-variant-numeric: tabular-nums; opacity: 0.9; }
 
   .convert { margin-top: 10px; }
+  .quote-box {
+    background: var(--bg-elev-2, rgba(127,127,127,0.08));
+    border-radius: 10px; padding: 8px 10px; margin-bottom: 10px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .qrow { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .qrow b { font-size: 13px; }
+  .qrow b.bad { color: #ff9a9a; }
+  .spark { font-family: monospace; letter-spacing: -1px; opacity: 0.8; }
+  .getline { font-size: 15px; }
+  .getline b { font-size: 17px; }
   .convert-row {
     display: flex;
     gap: 6px;
