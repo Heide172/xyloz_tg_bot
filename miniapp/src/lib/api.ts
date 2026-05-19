@@ -1,5 +1,6 @@
 import { getChatId, getInitData } from './tg';
 import { seedFromMe, setBalance, sniffBalance } from './balance';
+import { track } from './analytics';
 import type {
   BalanceResponse,
   FarmState,
@@ -73,6 +74,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     else sniffBalance(data);
   } catch {
     /* кэш баланса не должен ломать запрос */
+  }
+  // Авто-трекинг действий: успешные POST (кроме самого /event).
+  if ((init.method ?? 'GET').toUpperCase() === 'POST' && path !== '/event') {
+    track('action', { name: path });
   }
   return data as T;
 }
@@ -243,6 +248,30 @@ export const api = {
     }),
   adminMarketCancel: (id: number) =>
     request<Record<string, any>>(`/admin/markets/${id}/cancel`, { method: 'POST' }),
+  adminAnalytics: (hours = 24) =>
+    request<{
+      hours: number;
+      total: number;
+      unique_users: number;
+      views: { name: string; n: number }[];
+      actions: { name: string; n: number }[];
+    }>(`/admin/analytics?hours=${hours}`),
+  adminMetrics: () =>
+    request<{
+      enabled: boolean;
+      routes: {
+        route: string;
+        method: string;
+        n: number;
+        avg_ms: number;
+        max_ms: number;
+        err4: number;
+        err5: number;
+        p50: string;
+        p95: string;
+      }[];
+      pool: Record<string, string>;
+    }>('/admin/metrics'),
   adminFeedbackList: () =>
     request<{
       items: {

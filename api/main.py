@@ -30,6 +30,7 @@ from api.routes import stats as stats_routes
 from api.routes import markets as markets_routes
 from api.routes import portfolio as portfolio_routes
 from api.routes import events as events_routes
+from api.routes import analytics as analytics_routes
 
 logger = logging.getLogger("api")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -109,3 +110,4 @@ app.include_router(tags_routes.router, prefix="/api/v1/tags", tags=["tags"])
 app.include_router(gacha_routes.router, prefix="/api/v1/gacha", tags=["gacha"])
 app.include_router(feedback_routes.router, prefix="/api/v1/feedback", tags=["feedback"])
 app.include_router(events_routes.router, prefix="/api/v1", tags=["events"])
+app.include_router(analytics_routes.router, prefix="/api/v1", tags=["analytics"])

@@ -5,6 +5,7 @@
   import { page } from '$app/stores';
   import { tgReady, getTg, getStartRoute } from '$lib/tg';
   import { startBalanceSSE } from '$lib/sse';
+  import { track } from '$lib/analytics';
 
   let chatBound = true;
 
@@ -16,6 +17,10 @@
     chatBound = params.has('chat_id') || !!startParam;
 
     startBalanceSSE();
+
+    const unsubView = page.subscribe((p) => {
+      if (p?.route?.id) track('view', { route: p.route.id });
+    });
 
     // Deep-link в раздел: если в start_param указан роут — переходим туда.
     if ($page.route.id === '/') {
