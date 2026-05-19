@@ -293,6 +293,42 @@ def _format_summary(chat_id: int, day_msk: date, nominations: list[Nomination], 
     return "\n".join(lines)
 
 
+async def _auto_fag(bot: Bot, chat_id: int) -> str | None:
+    """Автовыбор «пидора дня»: пик (идемпотентно за MSK-день), бонус,
+    авто-тег. Возвращает строку для сводки или None (нет кандидатов)."""
+    from common.models.user import User
+    from services.daily_pick_service import pick_participant_of_day
+    from services.tag_service import assign_nomination_tag
+
+    try:
+        result = pick_participant_of_day(chat_id)
+    except Exception:
+        return None  # вчера не было сообщений / нет кандидатов
+
+    session = SessionLocal()
+    try:
+        winner = session.query(User).filter(User.tg_id == result.winner_tg_id).first()
+        name = (
+            f"@{winner.username}" if winner and winner.username
+            else (winner.fullname if winner and winner.fullname
+                  else str(result.winner_tg_id))
+        )
+        winner_uid = winner.id if winner else None
+    finally:
+        session.close()
+
+    bonus = ""
+    if winner_uid is not None:
+        awarded = award_fag(chat_id=chat_id, user_id=winner_uid, day_msk=result.day_msk)
+        if awarded:
+            bonus = f"  +{awarded} гривен"
+    try:
+        await assign_nomination_tag(bot, chat_id, result.winner_tg_id, "пидор дня", "fag")
+    except Exception:
+        logger.exception("auto fag tag failed chat=%s", chat_id)
+    return f"Пидор дня: {name}{bonus}"
+
+
 async def run_daily_nominations(bot: Bot) -> None:
     """Подвести итоги вчерашнего MSK-дня для каждого активного чата, начислить и запостить."""
     yesterday = datetime.now(tz=MSK).date() - timedelta(days=1)
@@ -300,8 +336,9 @@ async def run_daily_nominations(bot: Bot) -> None:
     logger.info("nominations: %d active chats, day=%s", len(chat_ids), yesterday)
     for chat_id in chat_ids:
         try:
+            fag_line = await _auto_fag(bot, chat_id)
             nominations = collect_nominations_for_chat(chat_id, yesterday)
-            if not nominations:
+            if not nominations and not fag_line:
                 continue
             awarded = 0
             for n in nominations:
@@ -315,7 +352,12 @@ async def run_daily_nominations(bot: Bot) -> None:
                 )
                 if ok:
                     awarded += 1
-            text = _format_summary(chat_id, yesterday, nominations, awarded)
+            if nominations:
+                text = _format_summary(chat_id, yesterday, nominations, awarded)
+            else:
+                text = f"Номинации за {yesterday.strftime('%Y-%m-%d')} (MSK)"
+            if fag_line:
+                text = f"{text}\n\n{fag_line}"
             try:
                 await bot.send_message(chat_id, text)
             except Exception:
