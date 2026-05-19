@@ -73,15 +73,25 @@ def fetch_ig_caption(url: str) -> str | None:
     )
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
+            code = resp.getcode()
             page = resp.read().decode("utf-8", "replace")
     except Exception as exc:
-        logger.info("ig caption fetch failed for %s: %s", sid, str(exc)[:120])
+        logger.warning("ig caption fetch failed for %s: %s", sid, str(exc)[:160])
         return None
 
     mt = re.search(
         r'<div class="Caption">(.*?)<div class="CaptionComments"', page, re.S
     ) or re.search(r'<div class="Caption">(.*?)</div>', page, re.S)
     if not mt:
+        # Диагностика: понять, что именно вернул IG с прод-IP.
+        marker = 'class="Caption"' in page
+        gated = bool(
+            re.search(r"login|loginForm|/accounts/login|age|consent", page, re.I)
+        )
+        logger.warning(
+            "ig caption not found sid=%s http=%s len=%d caption_marker=%s gated=%s",
+            sid, code, len(page), marker, gated,
+        )
         return None
     raw = re.sub(r'<a class="CaptionUsername".*?</a>', "", mt.group(1), flags=re.S)
     raw = re.sub(r"<br\s*/?>", "\n", raw, flags=re.I)
