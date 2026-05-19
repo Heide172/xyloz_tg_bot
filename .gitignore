@@ -33,3 +33,4 @@ logs/
 
 # Telegram / session artifacts
 *.session
+backups/
