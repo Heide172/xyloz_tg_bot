@@ -26,17 +26,23 @@
   $: titleTaken =
     st && title.trim() && st.occupied.includes(title.trim()) && st.mine?.title !== title.trim();
 
+  /** Бэкенд отдаёт ISO без TZ — это UTC, но `new Date()` парсит как local
+   * (по спеке). Добавляем Z если её нет. */
+  function utcDate(s: string): Date {
+    return new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z');
+  }
+
   // «Скоро истечёт» = осталось < 24ч; «Истёк» = expired=true.
   $: expSoon = (() => {
     if (!st?.mine) return false;
     if (st.mine.expired) return true;
-    const ms = new Date(st.mine.expires_at).getTime() - Date.now();
+    const ms = utcDate(st.mine.expires_at).getTime() - Date.now();
     return ms > 0 && ms < 24 * 3600 * 1000;
   })();
 
   $: hoursLeft = (() => {
     if (!st?.mine || st.mine.expired) return null;
-    const ms = new Date(st.mine.expires_at).getTime() - Date.now();
+    const ms = utcDate(st.mine.expires_at).getTime() - Date.now();
     if (ms <= 0) return 0;
     return Math.max(1, Math.round(ms / 3600 / 1000));
   })();
@@ -54,7 +60,7 @@
       haptic(r.tg_applied ? 'success' : 'error');
       if (r.tg_applied) {
         showAlert(
-          `Тег «${r.title}» продлён на ${d} дн., до ${new Date(r.expires_at).toLocaleString('ru-RU')}.`
+          `Тег «${r.title}» продлён на ${d} дн., до ${utcDate(r.expires_at).toLocaleString('ru-RU')}.`
         );
       } else {
         tgWarn = r.tg_error ?? 'Telegram не подтвердил установку тега.';
@@ -98,7 +104,7 @@
       if (r.tg_applied) {
         const who = r.gift ? `подарен (tg_id ${r.recipient_tg_id})` : 'активен';
         showAlert(
-          `Тег «${r.title}» ${who} до ${new Date(r.expires_at).toLocaleString('ru-RU')}`
+          `Тег «${r.title}» ${who} до ${utcDate(r.expires_at).toLocaleString('ru-RU')}`
         );
       } else {
         tgWarn = r.tg_error ?? 'Telegram не подтвердил установку тега.';
@@ -197,7 +203,7 @@
         {#if st.mine.expired}
           <span class="danger">истёк</span>
         {:else}
-          <span class="muted small">до {new Date(st.mine.expires_at).toLocaleString('ru-RU')}</span>
+          <span class="muted small">до {utcDate(st.mine.expires_at).toLocaleString('ru-RU')}</span>
         {/if}
       </div>
       <button class="cancel" disabled={busy} on:click={cancel}>Снять</button>
