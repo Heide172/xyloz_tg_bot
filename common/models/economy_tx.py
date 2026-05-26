@@ -13,7 +13,7 @@ class EconomyTx(Base):
     chat_id = Column(BIGINT, nullable=False)
     amount = Column(Integer, nullable=False)  # положительное = пополнение, отрицательное = списание
     kind = Column(String(40), nullable=False)
-    ref_id = Column(String(80), nullable=True)
+    ref_id = Column(String(255), nullable=True)
     note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
