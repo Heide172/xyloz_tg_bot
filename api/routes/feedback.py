@@ -7,7 +7,11 @@ from pydantic import BaseModel, Field
 from api.auth import TgWebAppAuth, ensure_db_user, require_auth
 from common.logger.logger import get_logger
 from services.feedback_ai_service import assist
-from services.feedback_service import create_feedback
+from services.feedback_service import (
+    create_feedback,
+    default_reward,
+    list_by_user,
+)
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -57,3 +61,27 @@ async def assist_route(
         logger.exception("feedback assist failed")
         raise HTTPException(status_code=500, detail="ИИ недоступен")
     return res
+
+
+@router.get("/mine")
+async def mine(auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    """Все заявки текущего юзера — со статусом и наградой."""
+    user_id = ensure_db_user(auth)
+    rows = await asyncio.to_thread(list_by_user, user_id, 50)
+    return {
+        "items": [
+            {
+                "id": r["id"],
+                "kind": r["kind"],
+                "status": r["status"],
+                "text": r["text"],
+                "reward": r["reward"],
+                "default_reward": default_reward(r["kind"]),
+                "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                "rewarded_at": (
+                    r["rewarded_at"].isoformat() if r["rewarded_at"] else None
+                ),
+            }
+            for r in rows
+        ]
+    }

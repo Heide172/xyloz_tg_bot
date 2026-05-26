@@ -10,6 +10,7 @@ from handlers.digest import router as digest_router
 from handlers.farm_admin import router as farm_admin_router
 from handlers.feedback_admin import router as feedback_admin_router
 from handlers.joke import router as joke_router
+from handlers.payments import router as payments_router
 from handlers.messages import router as message_router
 from handlers.rules import router as rules_router
 from handlers.mood import router as mood_router
@@ -80,6 +81,7 @@ async def main():
     dp.include_router(admin_status_router)
     dp.include_router(feedback_admin_router)
     dp.include_router(farm_admin_router)
+    dp.include_router(payments_router)  # ДО message_router (catch-all)
     dp.include_router(message_router)
     dp.include_router(reaction_router)
 

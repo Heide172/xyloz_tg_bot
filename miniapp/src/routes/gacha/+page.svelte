@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { fmtCoins } from '$lib/format';
-  import { haptic, showAlert } from '$lib/tg';
+  import { haptic, openInvoice, showAlert } from '$lib/tg';
   import type { BalanceResponse } from '$lib/types';
 
   let balance: BalanceResponse | null = null;
@@ -13,6 +13,10 @@
   let tab: 'roll' | 'collection' = 'roll';
   let reveal: any[] = []; // выпавшие карточки для анимации
   let revealing = false;
+
+  const STAR_PACKS = [1, 5, 25, 100];
+  let donateBusy = false;
+  let donateOpen = false;
 
   const RAR_LABEL: Record<string, string> = { R: 'R', SR: 'SR', SSR: 'SSR', UR: 'UR' };
 
@@ -80,6 +84,34 @@
   }
 
   $: bannerChar = col ? charById(col.banner) : null;
+
+  async function donate(stars: number) {
+    if (donateBusy) return;
+    donateBusy = true;
+    try {
+      const inv = await api.gachaStarsInvoice(stars);
+      const status = await openInvoice(inv.url);
+      if (status === 'paid') {
+        haptic('success');
+        showAlert(`Спасибо! +${inv.hryvnia}г будет на балансе через пару секунд.`);
+        // Бот пришлёт подтверждение в ЛС; обновим состояние.
+        setTimeout(refresh, 1500);
+        donateOpen = false;
+      } else if (status === 'cancelled') {
+        haptic('light');
+      } else if (status === 'unsupported') {
+        showAlert('Открой страницу в Telegram, чтобы оплатить звёздами.');
+      } else if (status === 'failed') {
+        haptic('error');
+        showAlert('Не получилось открыть оплату — попробуй ещё раз.');
+      }
+    } catch (e: any) {
+      showAlert(e?.message ?? 'Ошибка');
+      haptic('error');
+    } finally {
+      donateBusy = false;
+    }
+  }
 </script>
 
 <a class="back" href={`/farm${search}`}>← к ферме</a>
@@ -148,6 +180,36 @@
       <button class="rb10" disabled={busy} on:click={() => roll(10)}>
         Крутить ×10 (гарант SR+)<span class="c">{fmtCoins(col.x10_cost)}</span>
       </button>
+    </div>
+
+    <div class="donate">
+      {#if !donateOpen}
+        <button class="donate-toggle" on:click={() => (donateOpen = true)}>
+          ⭐ Поддержать сервер (звёзды → гривны)
+        </button>
+      {:else}
+        <div class="donate-card">
+          <div class="dt">⭐ Поддержать сервер</div>
+          <div class="muted small">
+            1⭐ → {col.roll_cost}г на твой баланс. Идёт на хостинг и развитие.
+          </div>
+          <div class="donate-grid">
+            {#each STAR_PACKS as n}
+              <button
+                class="pack"
+                disabled={donateBusy}
+                on:click={() => donate(n)}
+              >
+                <div class="pack-stars">{n}⭐</div>
+                <div class="pack-h muted small">+{fmtCoins(n * col.roll_cost)}</div>
+              </button>
+            {/each}
+          </div>
+          <button class="donate-close" on:click={() => (donateOpen = false)}>
+            Скрыть
+          </button>
+        </div>
+      {/if}
     </div>
   {:else}
     <div class="grid">
@@ -224,6 +286,36 @@
   .rb10 { background: linear-gradient(90deg,#7a4cff,#b14cff); }
   .rb1 .c, .rb10 .c { font-variant-numeric: tabular-nums; opacity: 0.92; }
   .rb1:disabled, .rb10:disabled { opacity: 0.55; }
+
+  .donate { margin: 14px 0 4px; }
+  .donate-toggle {
+    width: 100%; padding: 11px; border: 1px dashed var(--separator);
+    background: transparent; color: var(--text-muted);
+    border-radius: 10px; font-weight: 600; font-size: 13px; cursor: pointer;
+  }
+  .donate-toggle:hover { color: var(--text); border-color: var(--accent); }
+  .donate-card {
+    padding: 14px; border-radius: 12px;
+    background: linear-gradient(135deg, rgba(255,196,0,0.12), rgba(255,45,149,0.12));
+    border: 1px solid rgba(255,196,0,0.35);
+  }
+  .dt { font-weight: 800; font-size: 15px; margin-bottom: 4px; }
+  .donate-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0;
+  }
+  .pack {
+    padding: 10px 4px; border: 1px solid var(--separator); background: var(--bg);
+    color: var(--text); border-radius: 10px; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .pack:hover { border-color: var(--accent); }
+  .pack:disabled { opacity: 0.5; cursor: progress; }
+  .pack-stars { font-weight: 800; font-size: 14px; }
+  .pack-h { font-size: 11px; }
+  .donate-close {
+    width: 100%; padding: 6px; border: 0; background: transparent;
+    color: var(--text-muted); font-size: 12px; cursor: pointer; text-decoration: underline;
+  }
 
   .reveal { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 14px; }
   .reveal.multi .rc { width: calc(20% - 7px); }

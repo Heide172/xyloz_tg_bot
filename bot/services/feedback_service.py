@@ -38,7 +38,7 @@ def _admin_tg_ids() -> list[int]:
 def create_feedback(
     user_id: int | None, chat_id, kind: str, text: str, who: str
 ) -> int:
-    """Создать заявку + уведомить админов в ЛС. Возвращает id."""
+    """Создать заявку + уведомить админов в ЛС + ack автору. Возвращает id."""
     if kind not in ("bug", "idea"):
         kind = "idea"
     text = (text or "").strip()[:2000]
@@ -51,6 +51,11 @@ def create_feedback(
         session.add(fb)
         session.commit()
         fid = fb.id
+        author_tg_id = None
+        if user_id is not None:
+            u = session.query(User).filter(User.id == user_id).first()
+            if u:
+                author_tg_id = u.tg_id
     except Exception:
         session.rollback()
         raise
@@ -65,7 +70,47 @@ def create_feedback(
             send_chat_message(admin_id, note)
         except Exception:
             logger.warning("feedback notify failed for admin %s", admin_id)
+    # ack автору в ЛС
+    if author_tg_id is not None:
+        try:
+            kind_ru = "баг" if kind == "bug" else "идея"
+            reward = default_reward(kind)
+            ack = (
+                f"✅ {icon} #{fid} принят: «{text[:80]}{'…' if len(text) > 80 else ''}»\n"
+                f"Я напишу, когда закрою заявку. За закрытую {kind_ru} начислю до "
+                f"{reward}г в чат."
+            )
+            send_chat_message(author_tg_id, ack)
+        except Exception:
+            logger.warning("feedback ack failed for user %s", author_tg_id)
     return fid
+
+
+def list_by_user(user_id: int, limit: int = 50) -> list[dict]:
+    """Все заявки конкретного юзера (новые сверху)."""
+    session = SessionLocal()
+    try:
+        rows = (
+            session.query(Feedback)
+            .filter(Feedback.user_id == user_id)
+            .order_by(Feedback.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "id": r.id,
+                "kind": r.kind,
+                "status": r.status,
+                "text": r.text,
+                "reward": r.reward,
+                "created_at": r.created_at,
+                "rewarded_at": r.rewarded_at,
+            }
+            for r in rows
+        ]
+    finally:
+        session.close()
 
 
 def list_open(limit: int = 20) -> list[dict]:

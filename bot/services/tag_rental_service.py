@@ -38,7 +38,28 @@ def _bot_token() -> str:
     return t
 
 
-def _tg(method: str, params: dict) -> bool:
+def _humanize_tg_error(method: str, code: int | None, desc: str) -> str:
+    """Превращает Telegram error в понятный пользователю текст."""
+    d = (desc or "").lower()
+    if "not enough rights" in d or "can't promote" in d or "can_promote_members" in d:
+        return "У бота нет прав admin'а в чате — попроси админа выдать боту право назначать админов."
+    if "user is an administrator of the chat" in d or "method is available only for supergroups" in d:
+        return desc or "Telegram отказал в операции."
+    if "user_not_promoted" in d or "can't change custom title" in d or (
+        "not enough rights" in d and method == "setChatAdministratorCustomTitle"
+    ):
+        return "Telegram разрешает менять тег только тем, кого бот сам сделал админом. Если ты уже админ — попроси владельца снять с тебя админку и попробуй снова."
+    if "chat_admin_required" in d:
+        return "Бот не админ в этом чате — теги недоступны."
+    if "user not found" in d:
+        return "Юзер не найден в чате."
+    if code:
+        return f"Telegram error {code}: {desc}"
+    return desc or "Telegram не ответил."
+
+
+def _tg(method: str, params: dict) -> tuple[bool, str | None]:
+    """Telegram API call. Возвращает (ok, human_error)."""
     url = f"https://api.telegram.org/bot{_bot_token()}/{method}"
     data = urllib.parse.urlencode(params).encode()
     req = urllib.request.Request(
@@ -47,27 +68,36 @@ def _tg(method: str, params: dict) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             body = json.loads(resp.read().decode("utf-8"))
-        if not body.get("ok"):
-            logger.warning("%s failed: %s", method, body)
-            return False
-        return True
+    except urllib.request.HTTPError as exc:
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            logger.error("%s HTTPError %s (no body)", method, exc.code)
+            return False, f"Telegram HTTP {exc.code}"
     except Exception:
-        logger.exception("%s error", method)
-        return False
+        logger.exception("%s network error", method)
+        return False, "Сеть недоступна, попробуй позже."
+
+    if body.get("ok"):
+        return True, None
+    code = body.get("error_code")
+    desc = body.get("description") or ""
+    logger.error("%s failed: code=%s desc=%s", method, code, desc)
+    return False, _humanize_tg_error(method, code, desc)
 
 
-def _set_tg_title(chat_id: int, tg_user_id: int, title: str) -> bool:
-    ok = _tg("promoteChatMember", {
+def _set_tg_title(chat_id: int, tg_user_id: int, title: str) -> tuple[bool, str | None]:
+    ok, err = _tg("promoteChatMember", {
         "chat_id": chat_id, "user_id": tg_user_id, "can_invite_users": "true"
     })
     if not ok:
-        return False
+        return False, err
     return _tg("setChatAdministratorCustomTitle", {
         "chat_id": chat_id, "user_id": tg_user_id, "custom_title": title[:TITLE_MAX]
     })
 
 
-def _clear_tg_title(chat_id: int, tg_user_id: int) -> bool:
+def _clear_tg_title(chat_id: int, tg_user_id: int) -> tuple[bool, str | None]:
     return _tg("promoteChatMember", {
         "chat_id": chat_id, "user_id": tg_user_id, "can_invite_users": "false"
     })
@@ -80,40 +110,52 @@ def quote(days: int) -> int:
 
 
 def rent_sync(
-    user_id: int, tg_user_id: int, chat_id: int, title: str, days: int
+    payer_user_id: int,
+    payer_tg_id: int,
+    chat_id: int,
+    title: str,
+    days: int,
+    recipient_user_id: int | None = None,
+    recipient_tg_id: int | None = None,
 ) -> dict:
+    """Купить/продлить тег. Получатель = payer, либо явный recipient (подарок)."""
     title = (title or "").strip()
     if not (1 <= len(title) <= TITLE_MAX):
         raise InvalidArgument(f"Тег: 1..{TITLE_MAX} символов")
     price = quote(days)
+
+    holder_user_id = recipient_user_id if recipient_user_id is not None else payer_user_id
+    holder_tg_id = recipient_tg_id if recipient_tg_id is not None else payer_tg_id
+    is_gift = recipient_user_id is not None and recipient_user_id != payer_user_id
+
     session = SessionLocal()
     try:
         now = datetime.utcnow()
-        # title занят другим активным арендатором?
+        # title занят другим активным арендатором (не получателем)?
         busy = (
             session.query(TagRental)
             .filter(
                 TagRental.chat_id == chat_id,
                 TagRental.status == "active",
                 TagRental.title == title,
-                TagRental.user_id != user_id,
+                TagRental.user_id != holder_user_id,
             )
             .first()
         )
         if busy:
             raise InvalidArgument("Этот тег уже арендован другим игроком")
-        # у юзера уже активный?
+        # у получателя уже активный?
         mine = (
             session.query(TagRental)
             .filter(
                 TagRental.chat_id == chat_id,
                 TagRental.status == "active",
-                TagRental.user_id == user_id,
+                TagRental.user_id == holder_user_id,
             )
             .with_for_update()
             .first()
         )
-        bal = _get_or_create_balance(session, user_id, chat_id)
+        bal = _get_or_create_balance(session, payer_user_id, chat_id)
         if bal.balance < price:
             raise InsufficientFunds(f"Нужно {price}, у тебя {bal.balance}")
         bank = _get_or_create_bank(session, chat_id)
@@ -121,8 +163,9 @@ def rent_sync(
         bal.updated_at = now
         bank.balance += price
         bank.updated_at = now
-        _log_tx(session, user_id, chat_id, -price,
-                kind="tag_rent", note=f"«{title}» на {days}д")
+        gift_note = f" (подарок→{holder_tg_id})" if is_gift else ""
+        _log_tx(session, payer_user_id, chat_id, -price,
+                kind="tag_rent", note=f"«{title}» на {days}д{gift_note}")
         _log_tx(session, None, chat_id, price, kind="tag_rent_to_bank",
                 note=f"«{title}»")
 
@@ -131,12 +174,13 @@ def rent_sync(
             mine.title = title
             mine.expires_at = now + timedelta(days=days)
             mine.price_paid += price
+            mine.tg_user_id = holder_tg_id  # на всякий — синхронизируем
             rental = mine
         else:
             rental = TagRental(
                 chat_id=chat_id,
-                user_id=user_id,
-                tg_user_id=tg_user_id,
+                user_id=holder_user_id,
+                tg_user_id=holder_tg_id,
                 title=title,
                 price_paid=price,
                 rented_at=now,
@@ -150,6 +194,8 @@ def rent_sync(
             "expires_at": rental.expires_at.isoformat(),
             "price": price,
             "user_balance": bal.balance,
+            "gift": is_gift,
+            "recipient_tg_id": holder_tg_id if is_gift else None,
         }
         session.commit()
     except Exception:
@@ -158,7 +204,9 @@ def rent_sync(
     finally:
         session.close()
     # Telegram-вызов вне транзакции
-    _set_tg_title(chat_id, tg_user_id, title)
+    tg_ok, tg_err = _set_tg_title(chat_id, holder_tg_id, title)
+    result["tg_applied"] = tg_ok
+    result["tg_error"] = tg_err
     return result
 
 
@@ -185,8 +233,35 @@ def cancel_sync(user_id: int, chat_id: int) -> dict:
         raise
     finally:
         session.close()
-    _clear_tg_title(chat_id, tg_id)
-    return {"ok": True}
+    tg_ok, tg_err = _clear_tg_title(chat_id, tg_id)
+    return {"ok": True, "tg_applied": tg_ok, "tg_error": tg_err}
+
+
+def reapply_sync(user_id: int, chat_id: int) -> dict:
+    """Повторно выставить Telegram-тег по активной аренде без списания.
+    Полезно если предыдущий вызов TG провалился (бот лишился прав)."""
+    session = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        r = (
+            session.query(TagRental)
+            .filter(
+                TagRental.chat_id == chat_id,
+                TagRental.status == "active",
+                TagRental.user_id == user_id,
+                TagRental.expires_at > now,
+            )
+            .order_by(TagRental.expires_at.desc())
+            .first()
+        )
+        if not r:
+            raise InvalidArgument("Нет активной аренды для повтора")
+        title = r.title
+        tg_id = int(r.tg_user_id)
+    finally:
+        session.close()
+    tg_ok, tg_err = _set_tg_title(chat_id, tg_id, title)
+    return {"ok": True, "title": title, "tg_applied": tg_ok, "tg_error": tg_err}
 
 
 def state_sync(user_id: int, chat_id: int) -> dict:
@@ -267,8 +342,17 @@ def expire_due_sync() -> int:
         raise
     finally:
         session.close()
+    failed = 0
     for chat_id, tg_id in targets:
-        _clear_tg_title(chat_id, tg_id)
+        ok, err = _clear_tg_title(chat_id, tg_id)
+        if not ok:
+            failed += 1
+            logger.warning(
+                "expire: failed to clear title chat=%s tg=%s: %s",
+                chat_id, tg_id, err,
+            )
     if targets:
-        logger.info("tag rentals expired: %d", len(targets))
+        logger.info(
+            "tag rentals expired: %d (tg-clear failed: %d)", len(targets), failed
+        )
     return len(targets)

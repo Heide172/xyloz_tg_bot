@@ -19,6 +19,10 @@ from services.gacha_service import (
     set_banner,
     set_heroine_sync,
 )
+from services.payments_service import (
+    STARS_TO_HRYVNIA,
+    create_stars_invoice_link,
+)
 
 router = APIRouter()
 
@@ -33,6 +37,10 @@ class HeroineReq(BaseModel):
 
 class BannerReq(BaseModel):
     char_id: str
+
+
+class StarsInvoiceReq(BaseModel):
+    stars: int = Field(ge=1, le=2500, description="кол-во звёзд (1..2500)")
 
 
 def _err(e: Exception) -> HTTPException:
@@ -78,3 +86,26 @@ async def banner(req: BannerReq, auth: TgWebAppAuth = Depends(require_auth)) -> 
         return {"banner": req.char_id}
     except Exception as e:
         raise _err(e)
+
+
+@router.post("/stars_invoice")
+async def stars_invoice(
+    req: StarsInvoiceReq, auth: TgWebAppAuth = Depends(require_auth)
+) -> dict:
+    """Создать Stars-invoice для покупки гривен. Возвращает URL для openInvoice."""
+    chat_id = await require_chat_membership(auth)
+    user_id = ensure_db_user(auth)
+    try:
+        url = await asyncio.to_thread(
+            create_stars_invoice_link, user_id, chat_id, req.stars, "gacha"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Telegram отказал: {exc}")
+    return {
+        "url": url,
+        "stars": req.stars,
+        "hryvnia": req.stars * STARS_TO_HRYVNIA,
+        "rate": STARS_TO_HRYVNIA,
+    }

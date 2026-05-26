@@ -3,6 +3,7 @@
   import { api } from '$lib/api';
   import { fmtCoins } from '$lib/format';
   import { haptic, showAlert } from '$lib/tg';
+  import UserPicker from '$lib/UserPicker.svelte';
   import type { BalanceResponse } from '$lib/types';
 
   let balance: BalanceResponse | null = null;
@@ -13,6 +14,12 @@
 
   let title = '';
   let days = 1;
+  let giftOpen = false;
+  let giftTo = '';
+
+  // Предупреждение, если последний rent/cancel/reapply не выставил Telegram-тег
+  let tgWarn: string | null = null;
+  let reapplyBusy = false;
 
   $: search = typeof window !== 'undefined' ? window.location.search : '';
   $: price = st ? st.per_day * days : 0;
@@ -35,12 +42,32 @@
     const t = title.trim();
     if (!t) return showAlert('Введи текст тега');
     if (t.length > (st?.max_len ?? 16)) return showAlert(`Максимум ${st.max_len} символов`);
+    const gift = giftOpen ? giftTo.trim() : null;
+    if (giftOpen && !gift) return showAlert('Выбери получателя или закрой подарок');
     busy = true;
+    tgWarn = null;
     try {
-      const r = await api.tagsRent(t, days);
+      const r = await api.tagsRent(t, days, gift);
       if (balance) balance = { ...balance, balance: r.user_balance };
-      haptic('success');
-      showAlert(`Тег «${r.title}» активен до ${new Date(r.expires_at).toLocaleString('ru-RU')}`);
+      haptic(r.tg_applied ? 'success' : 'error');
+      if (r.tg_applied) {
+        const who = r.gift ? `подарен (tg_id ${r.recipient_tg_id})` : 'активен';
+        showAlert(
+          `Тег «${r.title}» ${who} до ${new Date(r.expires_at).toLocaleString('ru-RU')}`
+        );
+      } else {
+        tgWarn = r.tg_error ?? 'Telegram не подтвердил установку тега.';
+      }
+      // оптимистично подтягиваем — refresh может опаздывать
+      if (st && !r.gift) {
+        st = {
+          ...st,
+          mine: { title: r.title, expires_at: r.expires_at, expired: false }
+        };
+      }
+      title = '';
+      giftOpen = false;
+      giftTo = '';
       await refresh();
     } catch (e: any) {
       showAlert(e?.message ?? 'Ошибка');
@@ -54,14 +81,39 @@
     if (busy) return;
     if (!confirm('Снять свой тег? Деньги не возвращаются.')) return;
     busy = true;
+    tgWarn = null;
     try {
-      await api.tagsCancel();
+      const r = await api.tagsCancel();
       haptic('light');
+      if (!r.tg_applied) {
+        tgWarn = r.tg_error ?? 'Telegram не подтвердил снятие тега.';
+      }
       await refresh();
     } catch (e: any) {
       showAlert(e?.message ?? 'Ошибка');
     } finally {
       busy = false;
+    }
+  }
+
+  async function reapply() {
+    if (reapplyBusy) return;
+    reapplyBusy = true;
+    try {
+      const r = await api.tagsReapply();
+      if (r.tg_applied) {
+        tgWarn = null;
+        haptic('success');
+        showAlert(`Тег «${r.title}» переустановлен.`);
+        await refresh();
+      } else {
+        tgWarn = r.tg_error ?? 'Снова не удалось.';
+        haptic('error');
+      }
+    } catch (e: any) {
+      showAlert(e?.message ?? 'Ошибка');
+    } finally {
+      reapplyBusy = false;
     }
   }
 </script>
@@ -77,6 +129,16 @@
 <p class="muted small sub">
   Аренда подписи рядом с твоим ником в чате (реальный Telegram-титул, до 16 символов).
 </p>
+
+{#if tgWarn}
+  <div class="card warn">
+    <div class="warn-head">⚠️ Тег не установлен в Telegram</div>
+    <div class="warn-msg">{tgWarn}</div>
+    <button class="retry" disabled={reapplyBusy} on:click={reapply}>
+      {reapplyBusy ? '…' : 'Попробовать ещё раз'}
+    </button>
+  </div>
+{/if}
 
 {#if loading}
   <div class="muted">Загрузка…</div>
@@ -119,8 +181,24 @@
       Цена: <strong style="color:var(--text)">{fmtCoins(price)}</strong>
       ({fmtCoins(st.per_day)}/день · уходит в банк чата)
     </div>
-    <button class="go" disabled={busy || !title.trim() || titleTaken} on:click={rent}>
-      {busy ? '…' : `Арендовать · ${fmtCoins(price)}`}
+
+    <div class="gift">
+      <label class="gift-toggle">
+        <input type="checkbox" bind:checked={giftOpen} />
+        <span>🎁 Подарить другому игроку</span>
+      </label>
+      {#if giftOpen}
+        <div class="gift-body">
+          <UserPicker bind:value={giftTo} placeholder="@username или tg_id получателя" />
+          <div class="muted small" style="margin-top:6px">
+            Деньги списываются с тебя, тег ставится получателю.
+          </div>
+        </div>
+      {/if}
+    </div>
+
+    <button class="go" disabled={busy || !title.trim() || titleTaken || (giftOpen && !giftTo.trim())} on:click={rent}>
+      {busy ? '…' : `${giftOpen ? 'Подарить' : 'Арендовать'} · ${fmtCoins(price)}`}
     </button>
   </section>
 
@@ -206,4 +284,31 @@
     border-radius: 999px;
     font-size: 12px;
   }
+  .warn {
+    border: 1px solid #c87a2a;
+    background: rgba(200, 122, 42, 0.08);
+  }
+  .warn-head { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+  .warn-msg { font-size: 13px; line-height: 1.45; margin-bottom: 10px; }
+  .retry {
+    padding: 8px 14px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .gift { margin: 6px 0 12px; }
+  .gift-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .gift-toggle input { margin: 0; }
+  .gift-body { margin-top: 8px; }
 </style>

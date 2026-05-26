@@ -111,18 +111,56 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ message })
     }),
+  feedbackMine: () =>
+    request<{
+      items: {
+        id: number;
+        kind: 'bug' | 'idea';
+        status: string;
+        text: string;
+        reward: number;
+        default_reward: number;
+        created_at: string | null;
+        rewarded_at: string | null;
+      }[];
+    }>('/feedback/mine'),
   gachaCollection: () => request<any>('/gacha/collection'),
   gachaRoll: (count: number) =>
     request<any>('/gacha/roll', { method: 'POST', body: JSON.stringify({ count }) }),
   gachaSetHeroine: (char_id: string) =>
     request<any>('/gacha/heroine', { method: 'POST', body: JSON.stringify({ char_id }) }),
+  gachaStarsInvoice: (stars: number) =>
+    request<{ url: string; stars: number; hryvnia: number; rate: number }>(
+      '/gacha/stars_invoice',
+      { method: 'POST', body: JSON.stringify({ stars }) }
+    ),
   tagsState: () => request<any>('/tags/state'),
-  tagsRent: (title: string, days: number) =>
-    request<any>('/tags/rent', {
+  tagsRent: (title: string, days: number, giftTo: string | null = null) =>
+    request<{
+      title: string;
+      expires_at: string;
+      price: number;
+      user_balance: number;
+      gift: boolean;
+      recipient_tg_id: number | null;
+      tg_applied: boolean;
+      tg_error: string | null;
+    }>('/tags/rent', {
       method: 'POST',
-      body: JSON.stringify({ title, days })
+      body: JSON.stringify({ title, days, gift_to: giftTo })
     }),
-  tagsCancel: () => request<any>('/tags/cancel', { method: 'POST' }),
+  tagsCancel: () =>
+    request<{ ok: boolean; tg_applied: boolean; tg_error: string | null }>(
+      '/tags/cancel',
+      { method: 'POST' }
+    ),
+  tagsReapply: () =>
+    request<{
+      ok: boolean;
+      title: string;
+      tg_applied: boolean;
+      tg_error: string | null;
+    }>('/tags/reapply', { method: 'POST' }),
   duelList: () => request<any>('/duel/list'),
   duelChallenge: (opponent: string, stake: number) =>
     request<any>('/duel/challenge', {

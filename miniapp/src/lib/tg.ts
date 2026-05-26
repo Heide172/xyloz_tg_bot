@@ -77,3 +77,22 @@ export function haptic(type: 'light' | 'medium' | 'heavy' | 'success' | 'error' 
     tg.HapticFeedback?.impactOccurred(type);
   }
 }
+
+export type InvoiceStatus = 'paid' | 'cancelled' | 'failed' | 'pending' | 'unsupported';
+
+/** Открыть Telegram Stars-invoice. Возвращает финальный статус. */
+export function openInvoice(url: string): Promise<InvoiceStatus> {
+  return new Promise((resolve) => {
+    const tg = getTg() as any;
+    if (!tg?.openInvoice) {
+      window.open(url, '_blank');
+      resolve('unsupported');
+      return;
+    }
+    try {
+      tg.openInvoice(url, (status: InvoiceStatus) => resolve(status));
+    } catch {
+      resolve('failed');
+    }
+  });
+}
