@@ -11,6 +11,26 @@
   let err: string | null = null;
   let hasNew = false;
 
+  // Лёгкий статус тега для баннера «истекает».
+  let tagMine: { title: string; expires_at: string; expired: boolean } | null = null;
+
+  function utcDate(s: string): Date {
+    return new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : s + 'Z');
+  }
+
+  $: tagSoon = (() => {
+    if (!tagMine) return false;
+    if (tagMine.expired) return true;
+    const ms = utcDate(tagMine.expires_at).getTime() - Date.now();
+    return ms > 0 && ms < 24 * 3600 * 1000;
+  })();
+  $: tagHoursLeft = (() => {
+    if (!tagMine || tagMine.expired) return null;
+    const ms = utcDate(tagMine.expires_at).getTime() - Date.now();
+    if (ms <= 0) return 0;
+    return Math.max(1, Math.round(ms / 3600 / 1000));
+  })();
+
   onMount(async () => {
     try {
       const seen = localStorage.getItem('cl_seen') ?? '';
@@ -18,13 +38,14 @@
     } catch {
       /* ignore */
     }
-    try {
-      me = await api.me();
-    } catch (e: any) {
-      err = e?.message ?? 'Не удалось загрузить.';
-    } finally {
-      loading = false;
-    }
+    const [meRes, tagRes] = await Promise.allSettled([
+      api.me(),
+      api.tagsState()
+    ]);
+    if (meRes.status === 'fulfilled') me = meRes.value;
+    else err = (meRes.reason as any)?.message ?? 'Не удалось загрузить.';
+    if (tagRes.status === 'fulfilled') tagMine = tagRes.value?.mine ?? null;
+    loading = false;
   });
 
   $: baseTiles = [
@@ -89,6 +110,23 @@
     {/if}
   {/if}
 </section>
+
+{#if tagSoon && tagMine}
+  <a
+    class="tag-banner"
+    class:warn={tagMine.expired}
+    href={`/tags${typeof window !== 'undefined' ? window.location.search : ''}`}
+  >
+    <div class="tb-head">
+      {#if tagMine.expired}
+        ⌛ Тег «{tagMine.title}» истёк
+      {:else}
+        ⏰ Тег «{tagMine.title}» истекает через ~{tagHoursLeft}ч
+      {/if}
+    </div>
+    <div class="tb-cta">Продлить →</div>
+  </a>
+{/if}
 
 <section class="tiles">
   {#each tiles as t}
@@ -175,4 +213,29 @@
   .loading-line.big {
     height: 32px;
   }
+
+  .tag-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    margin-bottom: 14px;
+    border: 1px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 12px;
+    color: var(--text);
+    text-decoration: none;
+    box-shadow: var(--shadow);
+  }
+  .tag-banner.warn {
+    border-color: #c87a2a;
+    background: rgba(200, 122, 42, 0.12);
+  }
+  .tb-head { font-weight: 700; font-size: 14px; }
+  .tb-cta {
+    font-weight: 700; font-size: 13px;
+    color: var(--accent); white-space: nowrap;
+  }
+  .tag-banner.warn .tb-cta { color: #c87a2a; }
 </style>
