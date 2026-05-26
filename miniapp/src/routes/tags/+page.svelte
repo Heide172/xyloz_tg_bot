@@ -26,6 +26,51 @@
   $: titleTaken =
     st && title.trim() && st.occupied.includes(title.trim()) && st.mine?.title !== title.trim();
 
+  // «Скоро истечёт» = осталось < 24ч; «Истёк» = expired=true.
+  $: expSoon = (() => {
+    if (!st?.mine) return false;
+    if (st.mine.expired) return true;
+    const ms = new Date(st.mine.expires_at).getTime() - Date.now();
+    return ms > 0 && ms < 24 * 3600 * 1000;
+  })();
+
+  $: hoursLeft = (() => {
+    if (!st?.mine || st.mine.expired) return null;
+    const ms = new Date(st.mine.expires_at).getTime() - Date.now();
+    if (ms <= 0) return 0;
+    return Math.max(1, Math.round(ms / 3600 / 1000));
+  })();
+
+  let extendBusy = false;
+
+  async function extend(d: number) {
+    if (extendBusy || !st?.mine) return;
+    const t = st.mine.title;
+    extendBusy = true;
+    tgWarn = null;
+    try {
+      const r = await api.tagsRent(t, d, null);
+      if (balance) balance = { ...balance, balance: r.user_balance };
+      haptic(r.tg_applied ? 'success' : 'error');
+      if (r.tg_applied) {
+        showAlert(
+          `Тег «${r.title}» продлён на ${d} дн., до ${new Date(r.expires_at).toLocaleString('ru-RU')}.`
+        );
+      } else {
+        tgWarn = r.tg_error ?? 'Telegram не подтвердил установку тега.';
+      }
+      if (st) {
+        st = { ...st, mine: { title: r.title, expires_at: r.expires_at, expired: false } };
+      }
+      await refresh();
+    } catch (e: any) {
+      showAlert(e?.message ?? 'Ошибка');
+      haptic('error');
+    } finally {
+      extendBusy = false;
+    }
+  }
+
   async function refresh() {
     try {
       [balance, st] = await Promise.all([api.balance(), api.tagsState()]);
@@ -157,6 +202,29 @@
       </div>
       <button class="cancel" disabled={busy} on:click={cancel}>Снять</button>
     </div>
+
+    {#if expSoon}
+      <div class="card ext" class:warn={st.mine.expired}>
+        <div class="ext-head">
+          {#if st.mine.expired}
+            ⌛ Аренда истекла — продли, чтобы тег вернулся:
+          {:else}
+            ⏰ Тег истекает через ~{hoursLeft}ч — продлить?
+          {/if}
+        </div>
+        <div class="ext-btns">
+          {#each st.allowed_days as d}
+            <button
+              class="ext-btn"
+              disabled={extendBusy || busy}
+              on:click={() => extend(d)}
+            >
+              +{d} дн<span class="ext-c">{fmtCoins(st.per_day * d)}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
   {/if}
 
   <section class="card">
@@ -300,6 +368,34 @@
     font-size: 13px;
     cursor: pointer;
   }
+  .ext {
+    border: 1px solid var(--accent);
+    background: var(--accent-soft);
+  }
+  .ext.warn {
+    border-color: #c87a2a;
+    background: rgba(200, 122, 42, 0.1);
+  }
+  .ext-head { font-weight: 700; font-size: 14px; margin-bottom: 10px; }
+  .ext-btns { display: flex; gap: 6px; }
+  .ext-btn {
+    flex: 1;
+    padding: 10px 8px;
+    border: 0;
+    border-radius: 9px;
+    background: var(--accent);
+    color: var(--accent-text);
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .ext-btn:disabled { opacity: 0.55; }
+  .ext-c { font-size: 11px; opacity: 0.85; font-weight: 600; }
+
   .gift { margin: 6px 0 12px; }
   .gift-toggle {
     display: inline-flex;

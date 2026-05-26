@@ -98,6 +98,27 @@ def _set_tg_title(chat_id: int, tg_user_id: int, title: str) -> tuple[bool, str 
 
 
 def _clear_tg_title(chat_id: int, tg_user_id: int) -> tuple[bool, str | None]:
+    """Снять Telegram custom_title и demote.
+
+    Двухшаговая последовательность: сначала setChatAdministratorCustomTitle("")
+    (пока юзер ещё админ — это явно зануляет title и Telegram рассылает
+    обновление клиентам), потом promoteChatMember(... все права False).
+
+    Без шага «явно зануляем title» в некоторых клиентах остаётся
+    закэшированный custom_title, видный другим участникам чата даже
+    после demote — что вызывало жалобы «бывший арендатор/пидор всё ещё
+    с тегом». setChatAdministratorCustomTitle может ответить ошибкой
+    (юзер уже не админ нашего promote'а) — это не критично, всё равно
+    делаем demote.
+    """
+    set_ok, set_err = _tg("setChatAdministratorCustomTitle", {
+        "chat_id": chat_id, "user_id": tg_user_id, "custom_title": "",
+    })
+    if not set_ok:
+        logger.warning(
+            "clear: setTitle('') failed chat=%s tg=%s: %s (продолжаем demote)",
+            chat_id, tg_user_id, set_err,
+        )
     return _tg("promoteChatMember", {
         "chat_id": chat_id, "user_id": tg_user_id, "can_invite_users": "false"
     })

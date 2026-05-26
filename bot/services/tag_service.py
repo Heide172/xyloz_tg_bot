@@ -131,7 +131,23 @@ async def set_title(
 async def clear_title(
     bot: Bot, chat_id: int, tg_user_id: int
 ) -> tuple[bool, str | None]:
-    """Снять тег = demote (все права False). Возвращает (ok, error_text)."""
+    """Снять Telegram custom_title и demote. Возвращает (ok, error_text).
+
+    Двухшаговая последовательность: сначала setChatAdministratorCustomTitle("")
+    (пока юзер ещё админ), потом promote(... все права False).
+    Без явной зануляния title клиенты Telegram могут оставлять старый
+    custom_title в кэше, видный другим участникам чата.
+    """
+    try:
+        await bot.set_chat_administrator_custom_title(
+            chat_id=chat_id, user_id=tg_user_id, custom_title=""
+        )
+    except Exception as exc:
+        # Не критично — юзер мог быть promoted не нами; продолжаем demote.
+        logger.warning(
+            "clear: setTitle('') failed chat=%s user=%s: %s (продолжаем demote)",
+            chat_id, tg_user_id, exc,
+        )
     try:
         await bot.promote_chat_member(
             chat_id=chat_id,
