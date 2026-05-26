@@ -137,9 +137,13 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         coalesce=True,
         max_instances=1,
     )
+    # Каждый час: первый тик после 00:00 MSK снимает вчерашних номинантов;
+    # последующие часы retry'ят те, где Telegram отказал (например, бот
+    # потерял права админа). Раньше было раз в день — fail оставлял
+    # тег навсегда. См. expire_nomination_tags для деталей.
     scheduler.add_job(
         expire_nomination_tags,
-        trigger=CronTrigger(hour=0, minute=5, timezone=MOSCOW_TZ),
+        trigger=CronTrigger(minute=5, timezone=MOSCOW_TZ),
         args=(bot,),
         id="nomtag_expire",
         coalesce=True,

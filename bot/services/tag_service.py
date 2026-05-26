@@ -97,11 +97,13 @@ def _settings_with_prefix(prefix: str) -> list[tuple[str, str]]:
         s.close()
 
 
-async def set_title(bot: Bot, chat_id: int, tg_user_id: int, title: str) -> bool:
-    """Назначить custom_title. True если удалось."""
+async def set_title(
+    bot: Bot, chat_id: int, tg_user_id: int, title: str
+) -> tuple[bool, str | None]:
+    """Назначить custom_title. Возвращает (ok, error_text)."""
     title = (title or "").strip()[:TITLE_MAX]
     if not title:
-        return False
+        return False, "пустой title"
     try:
         await bot.promote_chat_member(
             chat_id=chat_id,
@@ -117,14 +119,19 @@ async def set_title(bot: Bot, chat_id: int, tg_user_id: int, title: str) -> bool
         await bot.set_chat_administrator_custom_title(
             chat_id=chat_id, user_id=tg_user_id, custom_title=title
         )
-        return True
+        return True, None
     except Exception as exc:
-        logger.warning("set_title failed chat=%s user=%s: %s", chat_id, tg_user_id, exc)
-        return False
+        msg = str(exc)
+        logger.error(
+            "set_title failed chat=%s user=%s: %s", chat_id, tg_user_id, msg
+        )
+        return False, msg
 
 
-async def clear_title(bot: Bot, chat_id: int, tg_user_id: int) -> bool:
-    """Снять тег = demote (все права False)."""
+async def clear_title(
+    bot: Bot, chat_id: int, tg_user_id: int
+) -> tuple[bool, str | None]:
+    """Снять тег = demote (все права False). Возвращает (ok, error_text)."""
     try:
         await bot.promote_chat_member(
             chat_id=chat_id,
@@ -137,10 +144,13 @@ async def clear_title(bot: Bot, chat_id: int, tg_user_id: int) -> bool:
             can_change_info=False,
             can_pin_messages=False,
         )
-        return True
+        return True, None
     except Exception as exc:
-        logger.warning("clear_title failed chat=%s user=%s: %s", chat_id, tg_user_id, exc)
-        return False
+        msg = str(exc)
+        logger.error(
+            "clear_title failed chat=%s user=%s: %s", chat_id, tg_user_id, msg
+        )
+        return False, msg
 
 
 # ---------------- авто-тег номинантам ----------------
@@ -154,34 +164,58 @@ async def assign_nomination_tag(
     slot — ключ номинации ('fag', 'active', ...). Трекаем последнего
     держателя в BotSetting, чтобы не оставлять старые теги навечно.
 
-    Не трогаем юзеров с активной арендой тега (они заплатили) —
-    проверка делается вызывающей стороной при наличии rental-сервиса.
+    Если у нового номинанта активная аренда — продлеваем её на 1 день
+    (компенсация за день, который ему придётся ходить с тегом номинанта).
+    Через сутки expire_nomination_tags снимет номинант и вернёт арендный.
     """
+    from services.tag_rental_service import (
+        active_title_for_tg,
+        extend_rental_after_nomination,
+    )
+
     key = f"nomtag:{slot}:{chat_id}"
     prev_id, _prev_day = _parse_holder(_setting_get(key))
     if prev_id is not None and prev_id != tg_user_id:
         # Номинант перетирал арендный тег у prev — вернём его, если
         # аренда ещё активна; иначе просто снимаем (demote).
-        from services.tag_rental_service import active_title_for_tg
-
         rented = active_title_for_tg(chat_id, prev_id)
         if rented:
             await set_title(bot, chat_id, prev_id, rented)
         else:
             await clear_title(bot, chat_id, prev_id)
+    # Если у нового номинанта активная аренда — компенсируем +1 день.
+    # Делаем ДО set_title чтобы при сбое не потерять компенсацию.
+    if active_title_for_tg(chat_id, tg_user_id):
+        ext = extend_rental_after_nomination(chat_id, tg_user_id, days=1)
+        if ext.get("extended"):
+            logger.info(
+                "nomtag %s: extended rental for tg=%s («%s» → %s)",
+                slot, tg_user_id, ext["title"], ext["new_expires_at"],
+            )
     # Приоритет всегда у номинанта — перетираем любой тег нового держателя.
-    ok = await set_title(bot, chat_id, tg_user_id, title)
+    ok, err = await set_title(bot, chat_id, tg_user_id, title)
     if ok:
         _setting_set(key, f"{tg_user_id}:{_today_msk()}")
+    else:
+        logger.error(
+            "nomtag %s: set_title failed for tg=%s: %s", slot, tg_user_id, err
+        )
 
 
 async def expire_nomination_tags(bot: Bot) -> int:
     """Снять протухшие номинант-теги (день MSK < сегодня или старый
     формат без даты). Если у держателя активная аренда — вернуть
-    арендный тег. Возвращает число снятых. Вызывается планировщиком.
+    арендный тег. Возвращает число снятых.
+
+    Если Telegram отказал (set/clear_title вернули False) — ключ НЕ удаляем,
+    чтобы следующий тик повторил попытку. Раньше ключ удалялся всегда —
+    из-за чего тег оставался в чате навсегда при первом же сбое.
     """
+    from services.tag_rental_service import active_title_for_tg
+
     today = _today_msk()
     cleared = 0
+    failed = 0
     for key, value in _settings_with_prefix("nomtag:"):
         tg_id, day = _parse_holder(value)
         if tg_id is None:
@@ -191,25 +225,31 @@ async def expire_nomination_tags(bot: Bot) -> int:
             continue  # тег за сегодня — не трогаем
         parts = key.split(":")
         if len(parts) != 3:
+            _setting_delete(key)  # сломанный ключ — выкидываем
             continue
         try:
             chat_id = int(parts[2])
         except ValueError:
+            _setting_delete(key)
             continue
-        from services.tag_rental_service import active_title_for_tg
 
         rented = active_title_for_tg(chat_id, tg_id)
-        try:
-            if rented:
-                await set_title(bot, chat_id, tg_id, rented)
-            else:
-                await clear_title(bot, chat_id, tg_id)
+        if rented:
+            ok, err = await set_title(bot, chat_id, tg_id, rented)
+        else:
+            ok, err = await clear_title(bot, chat_id, tg_id)
+        if ok:
             _setting_delete(key)
             cleared += 1
-        except Exception:
-            logger.warning(
-                "expire nomtag failed key=%s tg=%s", key, tg_id
+        else:
+            failed += 1
+            logger.error(
+                "nomtag expire FAILED key=%s tg=%s chat=%s: %s (retry next tick)",
+                key, tg_id, chat_id, err,
             )
-    if cleared:
-        logger.info("nomination tags expired: %d", cleared)
+    if cleared or failed:
+        logger.info(
+            "nomination tags expired: ok=%d failed=%d (failed keys остаются для retry)",
+            cleared, failed,
+        )
     return cleared

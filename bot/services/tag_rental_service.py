@@ -301,6 +301,56 @@ def state_sync(user_id: int, chat_id: int) -> dict:
         session.close()
 
 
+def extend_rental_after_nomination(
+    chat_id: int, tg_user_id: int, days: int = 1
+) -> dict:
+    """Продлить активную аренду на N дней (компенсация за день под номинант-тегом).
+
+    Возвращает {extended, title, new_expires_at}. Если активной аренды нет —
+    {extended: False}. Идемпотентность сейчас не нужна (вызов раз в день из
+    assign_nomination_tag), но если потребуется — можно завести табличку
+    rental_extensions(date, slot, chat_id, user_id) и пропускать дубль.
+    """
+    session = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        r = (
+            session.query(TagRental)
+            .filter(
+                TagRental.chat_id == chat_id,
+                TagRental.tg_user_id == tg_user_id,
+                TagRental.status == "active",
+                TagRental.expires_at > now,
+            )
+            .order_by(TagRental.expires_at.desc())
+            .with_for_update()
+            .first()
+        )
+        if not r:
+            return {"extended": False, "title": None, "new_expires_at": None}
+        r.expires_at = r.expires_at + timedelta(days=days)
+        new_expires = r.expires_at
+        title = r.title
+        session.commit()
+        logger.info(
+            "rental extended by %dд for tg=%s chat=%s («%s» → %s)",
+            days, tg_user_id, chat_id, title, new_expires.isoformat(),
+        )
+        return {
+            "extended": True,
+            "title": title,
+            "new_expires_at": new_expires.isoformat(),
+        }
+    except Exception:
+        session.rollback()
+        logger.exception(
+            "extend_rental failed chat=%s tg=%s", chat_id, tg_user_id
+        )
+        return {"extended": False, "title": None, "new_expires_at": None}
+    finally:
+        session.close()
+
+
 def active_title_for_tg(chat_id: int, tg_user_id: int) -> str | None:
     """Текст активной (не истёкшей) аренды юзера, иначе None.
     Используется номинант-тегами чтобы вернуть арендный тег при смене."""
