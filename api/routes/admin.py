@@ -364,6 +364,30 @@ async def twin_rotate_now(auth: TgWebAppAuth = Depends(require_auth)) -> dict:
     return {"target": target}
 
 
+class TwinSetTargetReq(BaseModel):
+    target: str = Field(min_length=2, max_length=64, description="@username или tg_id")
+
+
+@router.post("/twin/set_target")
+async def twin_set_target(
+    req: TwinSetTargetReq, auth: TgWebAppAuth = Depends(require_auth)
+) -> dict:
+    """Принудительно поставить таргета (минуя выбор participant_of_day).
+    Для теста / Stars-покупки дня (будет переиспользовано в этапе 4).
+    """
+    _ensure_admin(auth)
+    chat_id = await require_chat_membership(auth)
+    from services.twin_service import set_target_by_identifier
+
+    target = await asyncio.to_thread(set_target_by_identifier, chat_id, req.target)
+    if target is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Юзер не найден или в этом чате мало его сообщений (нужно ≥30).",
+        )
+    return {"target": target}
+
+
 @router.post("/feedback/{fid}/close")
 async def feedback_close(
     fid: int,

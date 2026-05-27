@@ -358,6 +358,11 @@ export const api = {
     }),
   adminTwinRotateNow: () =>
     request<{ target: any }>('/admin/twin/rotate_now', { method: 'POST' }),
+  adminTwinSetTarget: (target: string) =>
+    request<{ target: any }>('/admin/twin/set_target', {
+      method: 'POST',
+      body: JSON.stringify({ target })
+    }),
   adminFeedbackList: () =>
     request<{
       items: {

@@ -2,12 +2,14 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { haptic, showAlert } from '$lib/tg';
+  import UserPicker from '$lib/UserPicker.svelte';
 
   let state: any = null;
   let logs: any[] = [];
   let loading = true;
   let err: string | null = null;
   let busy = false;
+  let manualTarget = '';
 
   $: search = typeof window !== 'undefined' ? window.location.search : '';
 
@@ -59,6 +61,23 @@
       await refresh();
     } catch (e: any) {
       showAlert(e?.message ?? 'Ошибка');
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function setManual() {
+    if (busy || !manualTarget.trim()) return;
+    busy = true;
+    try {
+      const r = await api.adminTwinSetTarget(manualTarget.trim());
+      haptic('success');
+      showAlert(`Таргет: @${r.target.target_name} (корпус ${r.target.persona_stats?.msg_count ?? '?'} сообщ.)`);
+      manualTarget = '';
+      await refresh();
+    } catch (e: any) {
+      showAlert(e?.message ?? 'Ошибка');
+      haptic('error');
     } finally {
       busy = false;
     }
@@ -131,6 +150,20 @@
         Перезапустить ротацию
       </button>
     </div>
+
+    <div class="manual">
+      <div class="muted small">Поставить вручную (минуя ротацию):</div>
+      <div class="manual-row">
+        <UserPicker
+          bind:value={manualTarget}
+          placeholder="@username или tg_id"
+          disabled={busy}
+        />
+        <button class="primary" disabled={busy || !manualTarget.trim()} on:click={setManual}>
+          Поставить
+        </button>
+      </div>
+    </div>
   </section>
 
   <h2 class="h2">Лог последних ответов</h2>
@@ -173,8 +206,17 @@
     background: transparent; color: var(--text); font-weight: 600; font-size: 13px; cursor: pointer;
   }
   .primary {
-    margin-top: 10px; padding: 10px 16px; border: 0; border-radius: 9px;
+    margin-top: 0; padding: 10px 16px; border: 0; border-radius: 9px;
     background: var(--accent); color: var(--accent-text); font-weight: 700; cursor: pointer;
+    white-space: nowrap;
+  }
+  .primary:disabled { opacity: 0.5; }
+  .manual {
+    margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--separator);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .manual-row {
+    display: grid; grid-template-columns: 1fr auto; gap: 8px;
   }
   .empty { padding: 16px; text-align: center; }
   .small { font-size: 11px; }

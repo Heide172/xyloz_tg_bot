@@ -257,6 +257,40 @@ def rotate_daily(chat_ids: list[int]) -> dict:
     return {"picked": picked, "empty": empty}
 
 
+def set_target_by_identifier(chat_id: int, identifier: str) -> dict | None:
+    """Принудительно поставить таргета по @username или tg_id (для теста / админа).
+    Возвращает target dict или None если юзер не найден / нет корпуса.
+    """
+    identifier = (identifier or "").strip().lstrip("@")
+    session = SessionLocal()
+    try:
+        u = None
+        try:
+            tg_id = int(identifier)
+            u = session.query(User).filter(User.tg_id == tg_id).first()
+        except ValueError:
+            u = session.query(User).filter(User.username == identifier).first()
+        if u is None:
+            return None
+        if not _has_min_corpus(session, u.id, chat_id):
+            logger.info(
+                "twin set_target: thin corpus user=%s chat=%s", u.id, chat_id
+            )
+            return None
+        stats = compute_persona_stats(int(u.id), chat_id)
+        target = {
+            "target_user_id": int(u.id),
+            "target_tg_id": int(u.tg_id),
+            "target_name": u.username or u.fullname or f"id{u.tg_id}",
+            "day_msk": _today_msk_date(),
+            "persona_stats": stats,
+        }
+    finally:
+        session.close()
+    set_target_for_day(chat_id, target)
+    return target
+
+
 def get_state(chat_id: int) -> dict | None:
     """Безопасный read-only снапшот состояния для listener/UI."""
     session = SessionLocal()
