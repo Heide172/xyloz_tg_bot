@@ -66,14 +66,31 @@ async def _maybe_reply(message: Message) -> None:
 
     mentions = _extract_mentions(message.text)
     target_uname = (state.get("target_name") or "").lstrip("@").lower()
+    bot_uname = ""
+    if message.bot:
+        try:
+            bot_uname = ((await message.bot.me()).username or "").lower()
+        except Exception:
+            bot_uname = ""
+
+    # Тег нашего бота в тексте — тоже триггер «обращаются к двойнику».
+    mention_lc = [m.lower() for m in mentions]
+    if bot_uname and bot_uname in mention_lc:
+        mention_lc.append(target_uname)  # форсим match в should_reply
+
     is_reply_to_target = False
+    # reply на сообщение настоящего target-юзера ИЛИ на ответ самого бота
+    # (продолжение диалога с двойником — должен подхватывать).
     if message.reply_to_message and message.reply_to_message.from_user:
-        rt_uname = (message.reply_to_message.from_user.username or "").lower()
+        rt_user = message.reply_to_message.from_user
+        rt_uname = (rt_user.username or "").lower()
         if target_uname and rt_uname == target_uname:
+            is_reply_to_target = True
+        elif message.bot and rt_user.id == (await message.bot.me()).id:
             is_reply_to_target = True
 
     decision = should_reply(
-        state, message.text, mentions, is_reply_to_target, None
+        state, message.text, mention_lc, is_reply_to_target, None
     )
     logger.info(
         "twin_mw: chat=%s target=@%s mentions=%s reply_to_target=%s → reply=%s",
