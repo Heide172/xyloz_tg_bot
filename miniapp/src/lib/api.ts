@@ -329,6 +329,35 @@ export const api = {
       }[];
       pool: Record<string, string>;
     }>('/admin/metrics'),
+  adminTwinStatus: () =>
+    request<{
+      state: {
+        chat_id: number;
+        target_user_id: number | null;
+        target_tg_id: number | null;
+        target_name: string | null;
+        day_msk: string | null;
+        enabled: boolean;
+        paused_until: string | null;
+        replies_today: number;
+        last_reply_at: string | null;
+        persona_stats: Record<string, any>;
+      } | null;
+      logs: {
+        id: number;
+        text: string;
+        status: string;
+        cost: number;
+        created_at: string | null;
+      }[];
+    }>('/admin/twin'),
+  adminTwinToggle: (enabled: boolean) =>
+    request<{ enabled: boolean }>('/admin/twin/toggle', {
+      method: 'POST',
+      body: JSON.stringify({ enabled })
+    }),
+  adminTwinRotateNow: () =>
+    request<{ target: any }>('/admin/twin/rotate_now', { method: 'POST' }),
   adminFeedbackList: () =>
     request<{
       items: {

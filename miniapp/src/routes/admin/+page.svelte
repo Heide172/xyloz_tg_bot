@@ -24,6 +24,7 @@
     { href: 'bank', title: 'Банк чата', desc: 'Корректировать общий банк' },
     { href: 'markets/manage', title: 'Управление рынками', desc: 'Resolve / Cancel' },
     { href: 'feedback', title: 'Обратная связь', desc: 'Баги/идеи: закрыть + наградить' },
+    { href: 'twin', title: '🎭 Двойник дня', desc: 'Статус, тоггл, лог ответов' },
     { href: 'analytics', title: 'Аналитика', desc: 'Usage + перф API' }
   ];
 </script>

@@ -60,6 +60,26 @@ async def _expire_tag_rentals_job() -> None:
         logger.exception("tag_rentals expire job failed")
 
 
+async def _twin_daily_rotation_job() -> None:
+    """Сразу после daily_nominations: для каждого активного чата выбираем
+    «двойника дня». Сам ответный листенер живёт в bot/handlers (этап 2)."""
+    import asyncio
+
+    from services.twin_service import rotate_daily
+
+    chat_ids = find_active_chat_ids(window_days=14)
+    if not chat_ids:
+        return
+    try:
+        summary = await asyncio.to_thread(rotate_daily, chat_ids)
+        logger.info(
+            "twin daily rotation: chats=%d picked=%d empty=%d",
+            len(chat_ids), summary["picked"], summary["empty"],
+        )
+    except Exception:
+        logger.exception("twin rotation job failed")
+
+
 async def _weekly_digest_job(bot: Bot) -> None:
     chat_ids = find_active_chat_ids(window_days=14)
     logger.info("weekly digest: checking %d active chats", len(chat_ids))
@@ -146,6 +166,14 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         trigger=CronTrigger(minute=5, timezone=MOSCOW_TZ),
         args=(bot,),
         id="nomtag_expire",
+        coalesce=True,
+        max_instances=1,
+    )
+    # Двойник дня: ротация сразу после daily_nominations (10:00).
+    scheduler.add_job(
+        _twin_daily_rotation_job,
+        trigger=CronTrigger(hour=10, minute=10, timezone=MOSCOW_TZ),
+        id="twin_daily_rotation",
         coalesce=True,
         max_instances=1,
     )

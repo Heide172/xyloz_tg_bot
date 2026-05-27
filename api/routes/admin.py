@@ -267,6 +267,103 @@ def _notify_author(res: dict) -> None:
         pass
 
 
+# ---------------- twin (двойник дня) ----------------
+
+
+@router.get("/twin")
+async def twin_status(auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    """Статус двойника + последние 20 ответов из twin_log."""
+    _ensure_admin(auth)
+    chat_id = await require_chat_membership(auth)
+    from services.twin_service import get_state
+
+    def _logs():
+        from common.models.twin_log import TwinLog as _TL
+
+        s = SessionLocal()
+        try:
+            rows = (
+                s.query(_TL)
+                .filter(_TL.chat_id == chat_id)
+                .order_by(_TL.id.desc())
+                .limit(20)
+                .all()
+            )
+            return [
+                {
+                    "id": r.id,
+                    "text": r.response_text,
+                    "status": r.status,
+                    "cost": r.cost,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in rows
+            ]
+        finally:
+            s.close()
+
+    state = await asyncio.to_thread(get_state, chat_id)
+    logs = await asyncio.to_thread(_logs)
+    return {"state": state, "logs": logs}
+
+
+class TwinToggleReq(BaseModel):
+    enabled: bool
+
+
+@router.post("/twin/toggle")
+async def twin_toggle(
+    req: TwinToggleReq, auth: TgWebAppAuth = Depends(require_auth)
+) -> dict:
+    """Вкл/выкл двойника для этого чата."""
+    _ensure_admin(auth)
+    chat_id = await require_chat_membership(auth)
+
+    def _do():
+        from common.models.chat_twin_state import ChatTwinState
+
+        s = SessionLocal()
+        try:
+            st = (
+                s.query(ChatTwinState)
+                .filter(ChatTwinState.chat_id == chat_id)
+                .with_for_update()
+                .first()
+            )
+            if not st:
+                st = ChatTwinState(chat_id=chat_id, enabled=req.enabled)
+                s.add(st)
+            else:
+                st.enabled = req.enabled
+                st.updated_at = datetime.utcnow()
+            s.commit()
+            return st.enabled
+        except Exception:
+            s.rollback()
+            raise
+        finally:
+            s.close()
+
+    enabled = await asyncio.to_thread(_do)
+    return {"enabled": enabled}
+
+
+@router.post("/twin/rotate_now")
+async def twin_rotate_now(auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    """Принудительно перезапустить ротацию двойника прямо сейчас (для дебага)."""
+    _ensure_admin(auth)
+    chat_id = await require_chat_membership(auth)
+    from services.twin_service import pick_target_for_day, set_target_for_day
+
+    def _do():
+        target = pick_target_for_day(chat_id)
+        set_target_for_day(chat_id, target)
+        return target
+
+    target = await asyncio.to_thread(_do)
+    return {"target": target}
+
+
 @router.post("/feedback/{fid}/close")
 async def feedback_close(
     fid: int,
