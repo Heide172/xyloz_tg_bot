@@ -40,6 +40,9 @@ def _author_label(msg: Message) -> str:
 
 
 async def _maybe_reply(message: Message) -> None:
+    logger.debug("twin_mw: hit msg_id=%s chat=%s text=%r",
+                 message.message_id, message.chat.id if message.chat else None,
+                 (message.text or "")[:50])
     if not TWIN_ENABLED:
         return
     if message.from_user and message.from_user.is_bot:
@@ -55,6 +58,7 @@ async def _maybe_reply(message: Message) -> None:
 
     state = get_state(chat_id)
     if not state or not state.get("target_user_id"):
+        logger.debug("twin_mw: no state/target for chat=%s", chat_id)
         return
     # target пишет сам — двойник молчит
     if message.from_user and message.from_user.id == state.get("target_tg_id"):
@@ -68,9 +72,14 @@ async def _maybe_reply(message: Message) -> None:
         if target_uname and rt_uname == target_uname:
             is_reply_to_target = True
 
-    if not should_reply(
+    decision = should_reply(
         state, message.text, mentions, is_reply_to_target, None
-    ):
+    )
+    logger.info(
+        "twin_mw: chat=%s target=@%s mentions=%s reply_to_target=%s → reply=%s",
+        chat_id, target_uname, mentions, is_reply_to_target, decision,
+    )
+    if not decision:
         return
 
     try:
