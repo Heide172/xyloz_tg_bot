@@ -141,21 +141,26 @@ def _opted_out(session, user_id: int) -> bool:
 
 def _candidate_user_ids(session, chat_id: int) -> list[tuple[int, int, str]]:
     """Возвращает [(user_id, tg_id, name), ...] кандидатов в порядке приоритета:
-    вчерашний participant_of_day → winnerы за 7 дней (по убыванию даты).
+    сегодняшний participant_of_day (тот, у кого сейчас висит тег «пидор дня»)
+    → вчерашний → ещё ранее за 7 дней. pick_participant_of_day сохраняет
+    запись с day_msk = today; daily_nominations крутится в 10:00 MSK, наш
+    twin-rotate — в 10:10, так что к этому моменту запись на сегодня уже
+    есть. Если нет (бот стартанул раньше) — берём вчерашнего как фолбэк.
     """
-    yesterday = _yesterday_msk_date()
-    lookback = yesterday - timedelta(days=FALLBACK_LOOKBACK_DAYS)
+    today = _today_msk_date()
+    lookback = today - timedelta(days=FALLBACK_LOOKBACK_DAYS)
     rows = session.execute(sa_text("""
-        SELECT DISTINCT ON (winner_tg_id) day_msk, winner_tg_id, title
+        SELECT DISTINCT ON (winner_tg_id) day_msk, winner_tg_id
         FROM daily_picks
         WHERE chat_id = :c AND day_msk BETWEEN :from_d AND :to_d
           AND title = 'participant_of_day'
         ORDER BY winner_tg_id, day_msk DESC
-    """), {"c": chat_id, "from_d": lookback, "to_d": yesterday}).fetchall()
-    # сортируем по дате (свежие первыми) — порядок приоритета
+    """), {"c": chat_id, "from_d": lookback, "to_d": today}).fetchall()
+    # сортируем по дате (свежие первыми) — порядок приоритета:
+    # сегодняшний пидор дня впереди.
     rows = sorted(rows, key=lambda r: r[0], reverse=True)
     out = []
-    for _day, tg_id, _title in rows:
+    for _day, tg_id in rows:
         u = session.query(User).filter(User.tg_id == tg_id).first()
         if not u:
             continue
