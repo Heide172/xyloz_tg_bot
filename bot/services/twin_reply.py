@@ -163,6 +163,37 @@ def _fetch_target_tail(target_user_id: int, chat_id: int, n: int) -> list[str]:
         session.close()
 
 
+def _fetch_reply_pairs(
+    target_user_id: int, chat_id: int, n: int
+) -> list[tuple[str, str]]:
+    """Реальные диалоговые пары: на что target отвечал → как ответил.
+    Берём только пары с непустым триггером и непустым ответом, по убыванию
+    свежести. Это лучший few-shot для имитации стиля диалога.
+    """
+    from sqlalchemy import text as sa_text
+
+    session = SessionLocal()
+    try:
+        rows = session.execute(sa_text("""
+            SELECT t.text AS trig, r.text AS resp
+            FROM messages r
+            JOIN messages t
+              ON t.chat_id = r.chat_id
+             AND t.telegram_message_id = r.reply_to
+            WHERE r.user_id = :uid
+              AND r.chat_id = :cid
+              AND r.text IS NOT NULL
+              AND t.text IS NOT NULL
+              AND LENGTH(t.text) BETWEEN 3 AND 300
+              AND LENGTH(r.text) BETWEEN 2 AND 300
+            ORDER BY r.created_at DESC
+            LIMIT :n
+        """), {"uid": target_user_id, "cid": chat_id, "n": n}).fetchall()
+        return [(r[0].strip(), r[1].strip()) for r in rows]
+    finally:
+        session.close()
+
+
 def _fetch_chat_context(chat_id: int, before_id: int | None, n: int) -> list[tuple[str, str]]:
     """Последние n сообщений в чате до триггера. (author_label, text)."""
     session = SessionLocal()
@@ -191,27 +222,71 @@ def _fetch_chat_context(chat_id: int, before_id: int | None, n: int) -> list[tup
 
 
 def _build_prompt(state: dict, trigger_text: str, trigger_author: str,
-                  tail: list[str], context: list[tuple[str, str]]) -> tuple[str, str]:
+                  tail: list[str], context: list[tuple[str, str]],
+                  pairs: list[tuple[str, str]]) -> tuple[str, str]:
     name = state.get("target_name") or "?"
     stats = state.get("persona_stats") or {}
     avg_len = int(stats.get("avg_msg_len") or 80)
-    sys_prompt = (
-        f"Ты подражаешь стилю участника чата @{name}. Отвечай как он "
-        f"в чате с друзьями, естественно, как настоящий человек. "
-        f"Не выдумывай факты о его жизни. Сохраняй его уровень "
-        f"токсичности и юмора. Длина — около {avg_len} символов, "
-        f"максимум {MAX_REPLY_CHARS}. Не используй имя «{name}» от третьего "
-        f"лица — ты и есть он. Никаких пояснений про себя как ИИ."
+    avg_words = stats.get("avg_words", 0)
+    vocab_top = stats.get("vocab_top") or []
+    lc_ratio = float(stats.get("lowercase_ratio") or 0)
+    no_punct = float(stats.get("no_punct_ratio") or 0)
+    emoji_pm = float(stats.get("emoji_per_msg") or 0)
+
+    style_rules = []
+    if lc_ratio >= 0.6:
+        style_rules.append("пиши в нижнем регистре (он почти не использует заглавные)")
+    elif lc_ratio <= 0.2:
+        style_rules.append("используй заглавные в начале как обычно")
+    if no_punct >= 0.6:
+        style_rules.append("не ставь точки/запятые в конце — он почти не использует пунктуацию")
+    elif no_punct <= 0.2:
+        style_rules.append("ставь обычную пунктуацию")
+    if emoji_pm >= 0.5:
+        style_rules.append(f"можно эмодзи (он использует ~{emoji_pm} на сообщение)")
+    elif emoji_pm < 0.1:
+        style_rules.append("без эмодзи — он их почти не пишет")
+    if avg_words and avg_words < 6:
+        style_rules.append(f"коротко — обычно {avg_words} слов")
+
+    vocab_line = (
+        f"Часто использует слова: {', '.join(vocab_top[:20])}." if vocab_top else ""
     )
+
+    sys_prompt = (
+        f"Ты — участник чата @{name}. Отвечай от первого лица, как будто это "
+        f"настоящий ты в чате с друзьями.\n\n"
+        f"ЖЁСТКИЕ ПРАВИЛА СТИЛЯ (это важнее темы):\n"
+        f"- КОПИРУЙ регистр, пунктуацию, опечатки, сокращения и манеру речи "
+        f"из примеров ниже. Не пиши грамотнее, чем он.\n"
+        + "".join(f"- {r}\n" for r in style_rules)
+        + (f"- {vocab_line}\n" if vocab_line else "")
+        + f"- Не выдумывай факты о его жизни — если не знаешь, отшутись или съезжай с темы.\n"
+        f"- Никогда не называй себя «{name}» от третьего лица — ты и есть он.\n"
+        f"- Никаких пояснений «я ИИ» или «как языковая модель». Длина — около "
+        f"{avg_len} символов, максимум {MAX_REPLY_CHARS}.\n"
+        f"- Тональность и уровень токсичности — точно как у него, не сглаживай."
+    )
+
+    # Few-shot из реальных reply-пар: «когда тебе писали X, ты отвечал Y».
+    pairs_block = ""
+    if pairs:
+        examples = "\n".join(
+            f"  кто-то: «{t[:120]}»\n  ты: «{r[:120]}»"
+            for t, r in pairs[:8]
+        )
+        pairs_block = f"\nКак ты обычно отвечаешь в реальных диалогах:\n{examples}\n"
 
     tail_block = "\n".join(f"- {t}" for t in tail[:TAIL_RECENCY_N])
     ctx_block = "\n".join(f"{a}: {t}" for a, t in context[-CHAT_CONTEXT_N:])
 
     user_prompt = (
-        f"Примеры того, как ты обычно пишешь:\n{tail_block}\n\n"
-        f"Сейчас в чате идёт диалог:\n{ctx_block}\n\n"
+        f"Свежие примеры твоих сообщений:\n{tail_block}\n"
+        f"{pairs_block}\n"
+        f"Прямо сейчас в чате идёт диалог:\n{ctx_block}\n\n"
         f"Последнее сообщение от {trigger_author}: «{trigger_text}»\n\n"
-        f"Ответь от первого лица — короткой репликой в твоём стиле."
+        f"Ответь от первого лица — короткой репликой именно в ТВОЁМ стиле "
+        f"(см. правила и примеры выше). Только ответ, без кавычек и пояснений."
     )
     return sys_prompt, user_prompt
 
@@ -240,8 +315,9 @@ def craft_reply_sync(state: dict, trigger_text: str, trigger_author: str,
     if len(tail) < 5:
         return None  # совсем тонкий корпус — не выдумываем
     context = _fetch_chat_context(chat_id, before_message_id, CHAT_CONTEXT_N)
+    pairs = _fetch_reply_pairs(target_uid, chat_id, 12)
     sys_prompt, user_prompt = _build_prompt(
-        state, trigger_text, trigger_author, tail, context
+        state, trigger_text, trigger_author, tail, context, pairs
     )
     try:
         raw = ai_client.call(user_prompt, _model(), sys_prompt)

@@ -14,6 +14,8 @@
   5. Если никого — двойника на сегодня нет (state.target_user_id = None).
 """
 import os
+import re
+from collections import Counter
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -33,6 +35,23 @@ MIN_CORPUS = int(os.getenv("TWIN_MIN_CORPUS", "30"))
 PERSONA_WINDOW_DAYS = int(os.getenv("TWIN_PERSONA_WINDOW_DAYS", "30"))
 FALLBACK_LOOKBACK_DAYS = int(os.getenv("TWIN_FALLBACK_LOOKBACK_DAYS", "7"))
 
+# Стоп-слова для vocab fingerprint — частотный мусор, не характерный
+# для конкретного человека. Берём минимально, чтобы остались характерные.
+_STOPWORDS = {
+    "и", "в", "не", "что", "на", "я", "с", "по", "это", "как", "а", "но",
+    "то", "же", "так", "за", "у", "о", "из", "ну", "вот", "ещё", "уже",
+    "если", "когда", "только", "там", "тут", "был", "была", "было",
+    "быть", "есть", "нет", "да", "или", "от", "до", "для", "при", "под",
+    "над", "перед", "после", "без", "об", "обо", "к", "ко", "со",
+    "the", "a", "and", "or", "is", "of", "to", "in", "for", "on",
+    "this", "that", "i", "it", "be", "are", "you", "your",
+}
+_WORD_RE = re.compile(r"[А-Яа-яёЁA-Za-z]{3,}")
+_EMOJI_RE = re.compile(
+    r"[\U0001F000-\U0001FFFF\U00002600-\U000027BF\U0001F300-\U0001F6FF]"
+)
+_PUNCT_RE = re.compile(r"[.,!?;:]")
+
 
 def _today_msk_date():
     return datetime.now(tz=MSK).date()
@@ -45,13 +64,21 @@ def _yesterday_msk_date():
 def compute_persona_stats(
     user_id: int, chat_id: int, days: int = PERSONA_WINDOW_DAYS
 ) -> dict:
-    """Считает поведенческий профиль таргета для адаптивного pacing.
+    """Считает поведенческий + стилистический профиль таргета.
 
-    avg_msg_len      — среднее длины символов
-    avg_reply_rate   — доля сообщений с reply_to
-    avg_response_lag — медиана секунд между триггер-сообщением и его reply
-    active_hours_msk — топ-3 часов активности (по UTC сдвигаем в MSK)
-    msg_count        — объём корпуса в окне
+    Поведение (для adaptive pacing):
+      avg_msg_len      — среднее длины символов
+      avg_reply_rate   — доля сообщений с reply_to
+      avg_response_lag — медиана секунд между триггер-сообщением и его reply
+      active_hours_msk — топ-3 часов активности
+      msg_count        — объём корпуса в окне
+
+    Стиль (для LLM-промпта):
+      vocab_top        — топ-25 характерных слов (исключая стоп-листа)
+      lowercase_ratio  — доля сообщений целиком в нижнем регистре
+      no_punct_ratio   — доля сообщений без терминальной пунктуации
+      emoji_per_msg    — среднее число эмодзи на сообщение
+      avg_words        — среднее число слов в сообщении
     """
     session = SessionLocal()
     try:
@@ -110,12 +137,45 @@ def compute_persona_stats(
             hour_counts[h] = hour_counts.get(h, 0) + 1
         top_hours = sorted(hour_counts.items(), key=lambda x: -x[1])[:3]
 
+        # === стилевой fingerprint ===
+        word_counter: Counter = Counter()
+        emoji_total = 0
+        lowercase_msgs = 0
+        no_punct_msgs = 0
+        total_words = 0
+        for r in rows:
+            t = (r.text or "").strip()
+            if not t:
+                continue
+            # частотные слова
+            for w in _WORD_RE.findall(t.lower()):
+                if w in _STOPWORDS:
+                    continue
+                word_counter[w] += 1
+            # case
+            letters = [c for c in t if c.isalpha()]
+            if letters and all(c.islower() for c in letters):
+                lowercase_msgs += 1
+            # пунктуация
+            if not _PUNCT_RE.search(t):
+                no_punct_msgs += 1
+            # эмодзи
+            emoji_total += len(_EMOJI_RE.findall(t))
+            # слова
+            total_words += len(_WORD_RE.findall(t))
+        vocab_top = [w for w, c in word_counter.most_common(25) if c >= 2]
+
         return {
             "msg_count": msg_count,
             "avg_msg_len": avg_len,
             "avg_reply_rate": avg_reply_rate,
             "avg_response_lag": avg_lag,
             "active_hours_msk": [h for h, _ in top_hours],
+            "vocab_top": vocab_top,
+            "lowercase_ratio": round(lowercase_msgs / msg_count, 2),
+            "no_punct_ratio": round(no_punct_msgs / msg_count, 2),
+            "emoji_per_msg": round(emoji_total / msg_count, 2),
+            "avg_words": round(total_words / msg_count, 1),
         }
     finally:
         session.close()
