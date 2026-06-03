@@ -34,7 +34,9 @@ VPN_SESSION_STRING = os.getenv("VPN_SESSION_STRING", "")
 MONITORED_CHAT_IDS = monitored_chat_ids()
 
 # --- Доставка (тем же юзер-аккаунтом) ---
-VPN_DIGEST_TARGET_CHAT = os.getenv("VPN_DIGEST_TARGET_CHAT", "me")
+# Пусто/пробелы/не задано -> "me" (Saved Messages). Гарантия: без явного
+# валидного значения дайджест уходит ТОЛЬКО в Избранное, никуда наружу.
+VPN_DIGEST_TARGET_CHAT = (os.getenv("VPN_DIGEST_TARGET_CHAT") or "").strip() or "me"
 
 # --- Backfill ---
 VPN_BACKFILL_DAYS = int(os.getenv("VPN_BACKFILL_DAYS", "7"))
