@@ -5,12 +5,12 @@
 """
 import argparse
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from common.logger import get_logger
 from vpndigest import config
 from vpndigest.client import build_client
-from vpndigest.ingest import normalize
+from vpndigest.ingest import normalize, _utc_naive
 from vpndigest.storage import store_messages, register_chat
 
 log = get_logger("vpndigest.backfill")
@@ -27,7 +27,9 @@ async def _backfill_chat(app, peer, since: datetime) -> int:
     saved = 0
     batch: list[dict] = []
     async for m in app.get_chat_history(chat.id):
-        msg_date = m.date.astimezone(timezone.utc) if m.date and m.date.tzinfo else m.date
+        # m.date может быть naive или aware (зависит от версии Pyrogram);
+        # приводим к naive-UTC, как и since (и как хранится в БД).
+        msg_date = _utc_naive(m.date)
         if msg_date and msg_date < since:
             break
         row = normalize(m)
@@ -45,7 +47,7 @@ async def _backfill_chat(app, peer, since: datetime) -> int:
 async def main(days: int):
     if not config.MONITORED_CHAT_IDS:
         raise SystemExit("VPN_MONITORED_CHAT_IDS пуст — заполни .env")
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.utcnow() - timedelta(days=days)  # naive-UTC, как created_at в БД
     app = build_client(name="vpn_digest_backfill")
     total = 0
     async with app:
