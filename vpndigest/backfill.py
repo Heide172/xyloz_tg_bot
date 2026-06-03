@@ -49,6 +49,13 @@ async def main(days: int):
     app = build_client(name="vpn_digest_backfill")
     total = 0
     async with app:
+        # Прогрев кэша пиров: на in-memory сессии резолв по chat_id не работает,
+        # пока Pyrogram не увидит диалоги (см. resolve_peer в history_load.py).
+        warmed = 0
+        async for _ in app.get_dialogs():
+            warmed += 1
+        log.info("Кэш диалогов прогрет: %d", warmed)
+
         for peer in config.MONITORED_CHAT_IDS:
             try:
                 total += await _backfill_chat(app, peer, since)
