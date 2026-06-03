@@ -8,7 +8,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 from common.logger import get_logger
-from vpndigest import config
+from vpndigest import config, topics
 from vpndigest.client import build_client
 from vpndigest.ingest import normalize, _utc_naive
 from vpndigest.storage import store_messages, register_chat
@@ -34,6 +34,8 @@ async def _backfill_chat(app, peer, since: datetime) -> int:
             break
         row = normalize(m)
         if row:
+            if row.get("topic_id") and not row.get("topic_title"):
+                row["topic_title"] = await topics.title(app, chat.id, row["topic_id"])
             batch.append(row)
         if len(batch) >= _BATCH:
             saved += store_messages(batch)

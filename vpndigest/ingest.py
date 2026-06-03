@@ -5,7 +5,7 @@ from pyrogram import Client, filters
 from pyrogram.types import Message as TgMessage
 
 from common.logger import get_logger
-from vpndigest import config
+from vpndigest import config, topics
 from vpndigest.storage import store_messages
 
 log = get_logger("vpndigest.ingest")
@@ -78,10 +78,12 @@ async def run_listener():
     chat_filter = filters.chat(chat_ids) if chat_ids else filters.all
 
     @app.on_message(chat_filter)
-    async def _on_message(_: Client, m: TgMessage):
+    async def _on_message(client: Client, m: TgMessage):
         try:
             row = normalize(m)
             if row:
+                if row.get("topic_id") and not row.get("topic_title"):
+                    row["topic_title"] = await topics.title(client, m.chat.id, row["topic_id"])
                 store_messages([row])
         except Exception:
             log.exception("Не смог сохранить сообщение %s/%s", m.chat.id, m.id)

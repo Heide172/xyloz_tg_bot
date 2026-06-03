@@ -4,7 +4,7 @@ psycopg2-binary
 emoji
 python-dotenv
 alembic==1.17.2
-pyrogram
+kurigram>=2.1
 tgcrypto
 tqdm
 APScheduler>=3.10
