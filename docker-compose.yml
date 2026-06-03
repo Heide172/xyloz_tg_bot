@@ -108,6 +108,37 @@ services:
       # ПУСТУЮ строку не задавать — cobalt ломает tunnel (500).
       # внутренний сервис; наружу порт не публикуем
 
+  # --- vpn-digest: мониторинг VPN-чатов userbot'ом + дайджесты ---
+  vpn_userbot:
+    build:
+      context: .
+      dockerfile: bot.Dockerfile
+    command: python -m vpndigest.ingest
+    env_file:
+      - ./.env
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - default
+      - dokploy-network
+
+  vpn_digest_worker:
+    build:
+      context: .
+      dockerfile: bot.Dockerfile
+    command: python -m vpndigest.worker
+    env_file:
+      - ./.env
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - default
+      - dokploy-network
+
 networks:
   default:
   # Внешняя сеть Dokploy: в ней резолвится хост managed-БД

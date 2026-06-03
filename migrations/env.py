@@ -15,6 +15,9 @@ from common.models.user_balance import UserBalance
 from common.models.economy_tx import EconomyTx
 from common.models.chat_bank import ChatBank
 from common.models.market import Market, MarketOption, Bet
+from common.models.vpn_monitored_chat import VpnMonitoredChat
+from common.models.vpn_message import VpnMessage
+from common.models.vpn_digest import VpnDigest
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
