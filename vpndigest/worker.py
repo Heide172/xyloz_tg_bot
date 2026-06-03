@@ -4,6 +4,7 @@
     python -m vpndigest.worker             # демон по расписанию VPN_DIGEST_CRON
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 from common.logger import get_logger
@@ -44,15 +45,24 @@ def run_once(window_hours: int | None = None) -> VpnDigest | None:
         log.info("Нет осмысленных обсуждений за период — дайджест не формирую.")
         return None
 
-    log.info("Топиков: %d (сообщений: %d)", len(buckets), len(messages))
+    total_topics = len(buckets)
+    if total_topics > config.VPN_DIGEST_MAX_TOPICS:
+        log.info("Топиков %d > лимита %d — беру топ-%d по активности (остальное в дайджест не идёт)",
+                 total_topics, config.VPN_DIGEST_MAX_TOPICS, config.VPN_DIGEST_MAX_TOPICS)
+        buckets = buckets[:config.VPN_DIGEST_MAX_TOPICS]
+    log.info("Суммирую %d топиков (из %d, сообщений: %d) в %d потоков",
+             len(buckets), total_topics, len(messages), config.VPN_DIGEST_CONCURRENCY)
 
-    # MAP: саммари на топик
+    # MAP: саммари на топик — параллельно (ai_client.call блокирующий, потоки ок)
     topic_summaries: dict[tuple[int, int | None], str] = {}
-    for b in buckets:
-        try:
-            topic_summaries[(b.chat_id, b.topic_id)] = summarize.summarize_topic(b, period)
-        except Exception:
-            log.exception("Не смог суммировать топик %s/%s", b.chat_id, b.topic_id)
+    with ThreadPoolExecutor(max_workers=config.VPN_DIGEST_CONCURRENCY) as ex:
+        futs = {ex.submit(summarize.summarize_topic, b, period): b for b in buckets}
+        for fut in as_completed(futs):
+            b = futs[fut]
+            try:
+                topic_summaries[(b.chat_id, b.topic_id)] = fut.result()
+            except Exception:
+                log.exception("Не смог суммировать топик %s/%s", b.chat_id, b.topic_id)
 
     if not topic_summaries:
         log.warning("Все топик-саммари упали — пропускаю дайджест.")

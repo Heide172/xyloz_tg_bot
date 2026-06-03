@@ -43,6 +43,11 @@ VPN_BACKFILL_DAYS = int(os.getenv("VPN_BACKFILL_DAYS", "7"))
 
 # --- LLM (через bot.services.ai_client / OpenCode) ---
 VPN_DIGEST_MODEL = os.getenv("VPN_DIGEST_MODEL", "opencode-go/qwen3.5-plus")
+# Топ-N самых активных топиков в дайджест (остальное отбрасываем, чтобы не плодить
+# десятки LLM-вызовов и не растягивать прогон).
+VPN_DIGEST_MAX_TOPICS = int(os.getenv("VPN_DIGEST_MAX_TOPICS", "15"))
+# Параллельных LLM-вызовов при саммаризации топиков.
+VPN_DIGEST_CONCURRENCY = int(os.getenv("VPN_DIGEST_CONCURRENCY", "6"))
 
 # --- Расписание ---
 VPN_DIGEST_CRON = os.getenv("VPN_DIGEST_CRON", "0 9 * * *")
