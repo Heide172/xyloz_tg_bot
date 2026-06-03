@@ -13,6 +13,7 @@ from handlers.joke import router as joke_router
 from handlers.payments import router as payments_router
 from handlers.twin_admin import router as twin_admin_router
 from handlers.twin_listener import TwinMiddleware
+from handlers.ignore_chats import IgnoreChatsMiddleware
 from handlers.messages import router as message_router
 from handlers.rules import router as rules_router
 from handlers.mood import router as mood_router
@@ -70,6 +71,7 @@ async def setup_commands(bot: Bot) -> None:
 async def main():
     bot = Bot(token=os.getenv("TELEGRAM_TOKEN"))
     dp = Dispatcher()
+    dp.update.outer_middleware(IgnoreChatsMiddleware())  # игнор служебных чатов (xyloz-check канал)
     dp.include_router(stats_router)
     dp.include_router(digest_router)
     dp.include_router(user_card_router)

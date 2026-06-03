@@ -6,6 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from common.logger.logger import get_logger
+from services.check_poller import poll_check_once
 from services.digest_service import (
     find_active_chat_ids,
     generate_digest,
@@ -118,6 +119,14 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         embed_pending_once,
         trigger=IntervalTrigger(seconds=45),
         id="embed_pending",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        poll_check_once,
+        trigger=IntervalTrigger(seconds=30),
+        args=(bot,),
+        id="check_poller",
         coalesce=True,
         max_instances=1,
     )
