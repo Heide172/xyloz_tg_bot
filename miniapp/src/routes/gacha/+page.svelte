@@ -122,7 +122,7 @@
       showAlert(e?.message ?? 'Ошибка');
       return;
     }
-    if (balance) balance = { ...balance, balance: r.user_balance };
+    if (col) col = { ...col, gems: r.gems };
     batch = r.results;
     lastRefund = r.refunded ?? 0;
     const best = bestRarity(r.results);
@@ -243,8 +243,7 @@
     dailyBusy = true;
     try {
       const r = await api.gachaDaily();
-      if (balance) balance = { ...balance, balance: r.user_balance };
-      col = { ...col, daily_available: false };
+      col = { ...col, daily_available: false, gems: r.gems };
       haptic('success');
       toast(`Получено +${fmtCoins(r.amount)} ◆`);
     } catch (e: any) {
@@ -282,6 +281,79 @@
       haptic('error');
     } finally {
       donateBusy = false;
+    }
+  }
+
+  // ---------- gems: покупка за cp ----------
+  let buyGemsOpen = false;
+  let buyGemsBusy = false;
+  const GEM_PACKS = [1, 10, 50];
+  async function buyGems(qty: number) {
+    if (buyGemsBusy) return;
+    buyGemsBusy = true;
+    try {
+      const r = await api.gachaBuyGems(qty);
+      col = { ...col, gems: r.gems, cp_balance: r.cp_balance };
+      haptic('success');
+      toast(`+${fmtCoins(r.bought)} ◆ (−${fmtCoins(r.spent_cp)} cp)`);
+    } catch (e: any) {
+      showAlert(e?.message ?? 'Ошибка');
+      haptic('error');
+    } finally {
+      buyGemsBusy = false;
+    }
+  }
+
+  // ---------- арена (PvP-бой) ----------
+  let arenaOpen = false;
+  let arenaBusy = false;
+  let arenaResult: any = null;
+  let ladder: any[] | null = null;
+
+  async function fightArena() {
+    if (arenaBusy) return;
+    arenaBusy = true;
+    try {
+      const r = await api.gachaArena();
+      arenaResult = r;
+      arenaOpen = true;
+      if (col) col = { ...col, gems: r.gems };
+      haptic(r.result === 'win' ? 'success' : 'warning');
+      refresh();
+    } catch (e: any) {
+      showAlert(e?.message ?? 'Ошибка');
+      haptic('error');
+    } finally {
+      arenaBusy = false;
+    }
+  }
+
+  async function matchmake() {
+    if (arenaBusy) return;
+    arenaBusy = true;
+    try {
+      const r = await api.gachaPvpQueue();
+      if (r.matched) {
+        arenaResult = r;
+        arenaOpen = true;
+        haptic(r.result === 'win' ? 'success' : 'warning');
+        refresh();
+      } else {
+        toast('В очереди — бой начнётся, как найдётся соперник');
+      }
+    } catch (e: any) {
+      showAlert(e?.message ?? 'Ошибка');
+    } finally {
+      arenaBusy = false;
+    }
+  }
+
+  async function openLadder() {
+    try {
+      const r = await api.gachaPvpLadder();
+      ladder = r.ladder;
+    } catch {
+      ladder = [];
     }
   }
 
@@ -325,6 +397,14 @@
   function fmtBalance(n: number | undefined) {
     return (n ?? 0).toLocaleString('ru-RU');
   }
+
+  const ABIL: Record<string, string> = {
+    heavy_strike: 'Тяжёлый удар',
+    crit: 'Критический',
+    aoe: 'Залп',
+    heal: 'Исцеление',
+    guard: 'Защита'
+  };
 </script>
 
 <svelte:head>
@@ -338,11 +418,15 @@
     <div class="g-bal">
       <div class="g-diamond">◆</div>
       <div class="g-bal-txt">
-        <span class="g-bal-cap">Баланс</span>
-        <span class="g-bal-num">{fmtBalance(balance?.balance)}</span>
+        <span class="g-bal-cap">Gems</span>
+        <span class="g-bal-num">{fmtBalance(col?.gems)}</span>
       </div>
+      <button class="g-buygems" on:click={() => (buyGemsOpen = true)} title="Купить gems за cp">+</button>
     </div>
-    <a class="g-icon" href={`/farm${search}`} title="К ферме">✿</a>
+    <div class="g-head-right">
+      {#if col}<span class="g-cp" title="cp фермы">{fmtBalance(col.cp_balance)} cp</span>{/if}
+      <a class="g-icon" href={`/farm${search}`} title="К ферме">✿</a>
+    </div>
   </div>
 
   <!-- вкладки -->
@@ -405,6 +489,10 @@
               <span class="g-act-ic ic-green">✿</span>
               <span class="g-act-txt"><b>Ферма</b><small>Доход ср/ур</small></span>
             </a>
+            <button class="g-act act-arena" on:click={fightArena} disabled={arenaBusy}>
+              <span class="g-act-ic ic-red">⚔</span>
+              <span class="g-act-txt"><b>Арена</b><small>{arenaBusy ? 'бой…' : 'PvP-бой 5×5'}</small></span>
+            </button>
             <button class="g-act act-support" on:click={() => (donateOpen = true)}>
               <span class="g-act-ic ic-gold">★</span>
               <span class="g-act-txt"><b>Поддержать</b><small>Звёзды → гривны</small></span>
@@ -628,7 +716,7 @@
             <div class="g-card-info">
               <div class="g-card-name">{c.name}</div>
               <div class="g-card-stars"><span class="f">{'★'.repeat(c.stars)}</span><span class="e">{'☆'.repeat(5 - c.stars)}</span></div>
-              {#if c.refund > 0}<div class="g-card-rate" style="color:{cfg.color}">дубль 5★ · +{fmtCoins(c.refund)}</div>{/if}
+              {#if c.refund > 0}<div class="g-card-rate" style="color:{cfg.color}">дубль 5★ · +{fmtCoins(c.refund)} ◆</div>{/if}
             </div>
           </div>
           <div class="g-reveal-btns">
@@ -690,9 +778,19 @@
         <div class="g-detail-info">
           <div class="g-detail-name">{detail.name}</div>
           <div class="g-card-stars"><span class="f">{'★'.repeat(detail.stars)}</span><span class="e">{'☆'.repeat(5 - detail.stars)}</span></div>
-          <div class="g-detail-bond" style="color:{cfg.color}">♥ привязанность {detail.affection ?? 0} · ур. {detail.bond ?? 0}</div>
+          <div class="g-detail-bond" style="color:{cfg.color}">Ур. {detail.level ?? 1}/{detail.level_cap ?? 60} · ♥ {detail.affection ?? 0}</div>
         </div>
       </div>
+
+      {#if detail.stats}
+        <div class="g-statbar">
+          <div><b>{detail.stats.hp}</b><span>HP</span></div>
+          <div><b>{detail.stats.atk}</b><span>ATK</span></div>
+          <div><b>{detail.stats.def}</b><span>DEF</span></div>
+          <div><b>{detail.stats.spd}</b><span>SPD</span></div>
+        </div>
+        <div class="g-detail-abil">{detail.position === 'front' ? '🛡 фронт' : '🎯 бэк'} · {ABIL[detail.ability] ?? detail.ability}</div>
+      {/if}
 
       <div class="g-detail-actions">
         <button class="g-love" style="border-color:{cfg.color};box-shadow:0 0 24px {cfg.soft}" disabled={petBusy} on:click={pet}>Приласкать ♥</button>
@@ -730,6 +828,78 @@
             </button>
           {/each}
         </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- ===================== КУПИТЬ GEMS ===================== -->
+  {#if buyGemsOpen}
+    <div class="g-detail" style="background:radial-gradient(70% 70% at 50% 40%,rgba(75,180,255,.16),rgba(0,0,0,.94))">
+      <button class="g-detail-x" on:click={() => (buyGemsOpen = false)}>✕</button>
+      <div class="g-donate">
+        <div class="g-donate-h">◆ Купить gems</div>
+        <div class="g-sub" style="text-align:center;max-width:280px">
+          Курс: 1 ◆ = {fmtCoins(col?.cp_per_gem ?? 0)} cp. Доступно: {fmtCoins(col?.cp_balance ?? 0)} cp.
+          cp зарабатывается на ферме.
+        </div>
+        <div class="g-donate-grid" style="grid-template-columns:repeat(3,1fr)">
+          {#each GEM_PACKS as n}
+            <button
+              class="g-pack"
+              disabled={buyGemsBusy || (col?.cp_balance ?? 0) < n * (col?.cp_per_gem ?? 0)}
+              on:click={() => buyGems(n)}
+            >
+              <div class="g-pack-s">{n} ◆</div>
+              <div class="g-pack-h">{fmtCoins(n * (col?.cp_per_gem ?? 0))} cp</div>
+            </button>
+          {/each}
+        </div>
+        <a class="g-heroine" href={`/farm${search}`} style="text-decoration:none;text-align:center">На ферму за cp →</a>
+      </div>
+    </div>
+  {/if}
+
+  <!-- ===================== АРЕНА (РЕЗУЛЬТАТ БОЯ) ===================== -->
+  {#if arenaOpen && arenaResult}
+    <div
+      class="g-detail"
+      style="background:radial-gradient(70% 70% at 50% 38%,{arenaResult.result === 'win' ? 'rgba(127,208,160,.18)' : 'rgba(255,80,90,.16)'},rgba(0,0,0,.95))"
+    >
+      <button class="g-detail-x" on:click={() => { arenaOpen = false; ladder = null; }}>✕</button>
+      <div class="g-arena">
+        <div class="g-arena-h" style="color:{arenaResult.result === 'win' ? '#7fd0a0' : '#ff6f7c'}">
+          {arenaResult.result === 'win' ? 'Победа!' : 'Поражение'}
+        </div>
+        <div class="g-sub" style="text-align:center">
+          {arenaResult.rounds} раундов{#if arenaResult.rewards} · +{arenaResult.rewards.gems} ◆ · +{arenaResult.rewards.exp_each} exp{/if}{#if arenaResult.elo != null} · ELO {arenaResult.elo}{#if arenaResult.elo_delta != null} ({arenaResult.elo_delta >= 0 ? '+' : ''}{arenaResult.elo_delta}){/if}{/if}
+        </div>
+        <div class="g-arena-teams">
+          <div class="g-arena-side">
+            <div class="g-arena-cap">Ты</div>
+            {#each arenaResult.team as c (c.char_id)}
+              <div class="g-arena-card" style="border-color:{RAR[c.rarity].color}"><img src={charById(c.char_id)?.asset} alt={c.char_id} on:error={imgErr} /></div>
+            {/each}
+          </div>
+          <div class="g-arena-vs">VS</div>
+          <div class="g-arena-side">
+            <div class="g-arena-cap">Соперник</div>
+            {#each arenaResult.enemy as c, i (i)}
+              <div class="g-arena-card" style="border-color:{RAR[c.rarity].color}"><img src={charById(c.char_id)?.asset} alt={c.char_id} on:error={imgErr} /></div>
+            {/each}
+          </div>
+        </div>
+        <div class="g-arena-actions">
+          <button class="g-rb ghost" on:click={fightArena} disabled={arenaBusy}>Ещё бой</button>
+          <button class="g-rb gold" on:click={openLadder}>Ладдер</button>
+        </div>
+        {#if ladder}
+          <div class="g-ladder">
+            {#each ladder as row, i (row.user_id)}
+              <div class="g-ladder-row"><span>{i + 1}. {row.name}</span><span>{row.elo} · {row.wins}/{row.losses}</span></div>
+            {/each}
+            {#if !ladder.length}<div class="g-sub" style="text-align:center">Пока пусто</div>{/if}
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -2109,6 +2279,157 @@
     font-size: 11px;
     color: #ffce5e;
     font-weight: 700;
+  }
+
+  /* v2: gems в шапке + cp */
+  .g-buygems {
+    width: 24px;
+    height: 24px;
+    margin-left: 6px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 200, 90, 0.5);
+    background: rgba(255, 180, 58, 0.16);
+    color: #ffce5e;
+    font-size: 16px;
+    font-weight: 800;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .g-head-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .g-cp {
+    font-size: 11px;
+    font-weight: 700;
+    color: #7fd0a0;
+    background: rgba(31, 138, 91, 0.14);
+    border: 1px solid rgba(31, 138, 91, 0.3);
+    padding: 4px 8px;
+    border-radius: 9px;
+    white-space: nowrap;
+  }
+  .act-arena {
+    border-color: rgba(255, 80, 90, 0.4);
+    background: linear-gradient(135deg, rgba(255, 80, 90, 0.16), rgba(255, 255, 255, 0.02));
+  }
+  .ic-red {
+    color: #ff8a8a;
+    background: rgba(255, 80, 90, 0.16);
+    border: 1px solid rgba(255, 80, 90, 0.4);
+  }
+
+  /* v2: статы карты в детальной */
+  .g-statbar {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .g-statbar div {
+    flex: 1;
+    text-align: center;
+    padding: 7px 2px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .g-statbar b {
+    display: block;
+    font-family: Unbounded, sans-serif;
+    font-size: 13px;
+    color: #fff;
+  }
+  .g-statbar span {
+    font-size: 9px;
+    color: #9aa0ac;
+    font-weight: 700;
+  }
+  .g-detail-abil {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #cfd3db;
+    font-weight: 700;
+  }
+
+  /* v2: арена */
+  .g-arena {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    max-width: 380px;
+  }
+  .g-arena-h {
+    font-family: Unbounded, sans-serif;
+    font-weight: 800;
+    font-size: 26px;
+  }
+  .g-arena-teams {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    margin-top: 4px;
+  }
+  .g-arena-side {
+    flex: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    justify-content: center;
+  }
+  .g-arena-cap {
+    width: 100%;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 800;
+    color: #9aa0ac;
+    margin-bottom: 2px;
+  }
+  .g-arena-card {
+    width: 30%;
+    aspect-ratio: 1/1;
+    border-radius: 9px;
+    overflow: hidden;
+    border: 1.5px solid #555;
+    background: #0b0c10;
+  }
+  .g-arena-card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .g-arena-vs {
+    font-family: Unbounded, sans-serif;
+    font-weight: 800;
+    font-size: 13px;
+    color: #ffce5e;
+    flex: none;
+  }
+  .g-arena-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+  }
+  .g-ladder {
+    width: 100%;
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 28vh;
+    overflow-y: auto;
+  }
+  .g-ladder-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #dfe2e8;
+    padding: 7px 11px;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.05);
   }
 
   /* toast */

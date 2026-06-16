@@ -36,6 +36,13 @@ class ClickerFarm(Base):
     gacha_migrated = Column(Integer, nullable=False, default=0)  # 0/1 флаг конвертации workers
     last_daily_at = Column(DateTime, nullable=True)         # последний забранный ежедневный бонус (UTC)
 
+    # v2: валюта крутки gems + pity-флаг рейт-апа + PvP-рейтинг (docs/gacha_v2.md)
+    gems = Column(BIGINT, nullable=False, default=0)            # валюта крутки v2
+    rate_up_lost = Column(Integer, nullable=False, default=0)   # 0/1 проигран ли прошлый UR 50/50
+    pvp_elo = Column(Integer, nullable=False, default=1000)
+    pvp_wins = Column(Integer, nullable=False, default=0)
+    pvp_losses = Column(Integer, nullable=False, default=0)
+
     last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)

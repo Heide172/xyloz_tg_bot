@@ -14,12 +14,20 @@ from api.auth import (
 from services.gacha_service import (
     InsufficientFunds,
     InvalidArgument,
+    buy_gems_sync,
     collection_sync,
     daily_sync,
     pet_sync,
     roll_sync,
     set_banner,
     set_heroine_sync,
+)
+from services.pvp_service import (
+    arena_fight_sync,
+    auto_team_sync,
+    ladder_sync,
+    matchmake_cancel_sync,
+    matchmake_join_sync,
 )
 from services.payments_service import (
     STARS_TO_HRYVNIA,
@@ -47,6 +55,10 @@ class BannerReq(BaseModel):
 
 class StarsInvoiceReq(BaseModel):
     stars: int = Field(ge=1, le=2500, description="кол-во звёзд (1..2500)")
+
+
+class BuyGemsReq(BaseModel):
+    gems: int = Field(ge=1, le=10000, description="сколько gems купить за cp")
 
 
 def _err(e: Exception) -> HTTPException:
@@ -102,6 +114,64 @@ async def pet(req: PetReq, auth: TgWebAppAuth = Depends(require_auth)) -> dict:
         return await asyncio.to_thread(pet_sync, user_id, chat_id, req.char_id)
     except Exception as e:
         raise _err(e)
+
+
+# ---------------- v2: gems + PvP ----------------
+
+
+@router.post("/gems/buy")
+async def gems_buy(req: BuyGemsReq, auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    """Купить gems за cp фермы (курс CP_PER_GEM)."""
+    chat_id = await require_chat_membership(auth)
+    user_id = ensure_db_user(auth)
+    try:
+        return await asyncio.to_thread(buy_gems_sync, user_id, chat_id, req.gems)
+    except Exception as e:
+        raise _err(e)
+
+
+@router.get("/team")
+async def team(auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    """Авто-команда (топ-5 карт по силе) — превью состава."""
+    chat_id = await require_chat_membership(auth)
+    user_id = ensure_db_user(auth)
+    return await asyncio.to_thread(auto_team_sync, user_id, chat_id)
+
+
+@router.post("/arena")
+async def arena(auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    """Бой на арене против бот-команды (мгновенно)."""
+    chat_id = await require_chat_membership(auth)
+    user_id = ensure_db_user(auth)
+    try:
+        return await asyncio.to_thread(arena_fight_sync, user_id, chat_id)
+    except Exception as e:
+        raise _err(e)
+
+
+@router.post("/pvp/queue")
+async def pvp_queue(auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    """Встать в очередь матчмейка (мгновенный бой, если есть оппонент)."""
+    chat_id = await require_chat_membership(auth)
+    user_id = ensure_db_user(auth)
+    try:
+        return await asyncio.to_thread(matchmake_join_sync, user_id, chat_id)
+    except Exception as e:
+        raise _err(e)
+
+
+@router.post("/pvp/cancel")
+async def pvp_cancel(auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    chat_id = await require_chat_membership(auth)
+    user_id = ensure_db_user(auth)
+    return await asyncio.to_thread(matchmake_cancel_sync, user_id, chat_id)
+
+
+@router.get("/pvp/ladder")
+async def pvp_ladder(auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    chat_id = await require_chat_membership(auth)
+    ensure_db_user(auth)
+    return await asyncio.to_thread(ladder_sync, chat_id)
 
 
 @router.post("/banner")

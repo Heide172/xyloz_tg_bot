@@ -74,3 +74,86 @@ LEGACY_WORKER_MAP = {
     "star": "r_star",
     "diamond": "r_diamond",
 }
+
+# ============================================================================
+# v2: боевые статы карт (ККИ-слой). Каталог — в коде, как и фермовый.
+# Доку: docs/gacha_v2.md. Числа — «открытые параметры», крутятся на тесте.
+# ============================================================================
+
+MAX_LEVEL = 60
+# Кап уровня по звёздам (5★ снимает потолок до MAX_LEVEL).
+LEVEL_CAP_BY_STAR = {1: 20, 2: 30, 3: 40, 4: 50, 5: MAX_LEVEL}
+STAR_STAT_BONUS = 0.08   # +8% ко всем статам за звезду сверх первой
+LEVEL_STAT_GROWTH = 0.03  # +3% за уровень сверх первого
+
+# Базовые статы по тиру (для front-роли; back модифицируется ниже).
+TIER_BASE = {
+    "R":   {"hp": 300,  "atk": 45,  "def": 25, "spd": 50},
+    "SR":  {"hp": 480,  "atk": 70,  "def": 38, "spd": 58},
+    "SSR": {"hp": 720,  "atk": 105, "def": 55, "spd": 66},
+    "UR":  {"hp": 1050, "atk": 150, "def": 78, "spd": 75},
+}
+
+# Способности (effect_data — простые множители; читает battle_service).
+ABILITIES = {
+    "heavy_strike": {"name": "Тяжёлый удар", "desc": "×1.8 урон по цели",      "type": "single", "mult": 1.8},
+    "crit":         {"name": "Критический",  "desc": "×1.6 урон по цели",      "type": "single", "mult": 1.6},
+    "aoe":          {"name": "Залп",         "desc": "×0.6 урон по всем врагам", "type": "aoe",   "mult": 0.6},
+    "heal":         {"name": "Исцеление",    "desc": "лечит союзника на 22% HP", "type": "heal",  "frac": 0.22},
+    "guard":        {"name": "Защита",       "desc": "лечит себя на 16% HP",     "type": "self_heal", "frac": 0.16},
+}
+EVERY_N_ACTIONS = 3  # абилка срабатывает на каждое N-е действие карты
+
+# Позиция (front принимает удар первым) и способность по персонажу.
+CARD_POSITION = {
+    "r_cherry": "front", "r_lemon": "back", "r_bell": "back",
+    "r_star": "back", "r_diamond": "front",
+    "sr_harvest": "front", "sr_herbalist": "back",
+    "sr_beekeeper": "front", "sr_autumn": "back",
+    "ssr_noble": "front", "ssr_orchard": "back", "ssr_sun": "back",
+    "ur_celestial": "back", "ur_cosmic": "front", "ur_phoenix": "back",
+}
+CARD_ABILITY = {
+    "r_cherry": "guard", "r_lemon": "crit", "r_bell": "crit",
+    "r_star": "heavy_strike", "r_diamond": "guard",
+    "sr_harvest": "heavy_strike", "sr_herbalist": "heal",
+    "sr_beekeeper": "guard", "sr_autumn": "aoe",
+    "ssr_noble": "heavy_strike", "ssr_orchard": "aoe", "ssr_sun": "heal",
+    "ur_celestial": "heal", "ur_cosmic": "heavy_strike", "ur_phoenix": "aoe",
+}
+
+
+def card_position(char_id: str) -> str:
+    return CARD_POSITION.get(char_id, "back")
+
+
+def card_ability(char_id: str) -> str:
+    return CARD_ABILITY.get(char_id, "crit")
+
+
+def level_cap(stars: int) -> int:
+    return LEVEL_CAP_BY_STAR.get(max(1, min(stars, 5)), MAX_LEVEL)
+
+
+def card_stats(char_id: str, stars: int, level: int) -> dict:
+    """Боевые статы карты с учётом тира, роли (front/back), звёзд и уровня."""
+    c = CATALOG[char_id]
+    base = dict(TIER_BASE[c.rarity])
+    pos = card_position(char_id)
+    if pos == "front":
+        base["hp"] = base["hp"] * 1.3
+        base["def"] = base["def"] * 1.3
+        base["atk"] = base["atk"] * 0.85
+    else:  # back — урон
+        base["atk"] = base["atk"] * 1.25
+        base["hp"] = base["hp"] * 0.85
+    star_m = 1.0 + STAR_STAT_BONUS * (max(1, min(stars, 5)) - 1)
+    lvl_m = 1.0 + LEVEL_STAT_GROWTH * (max(1, level) - 1)
+    m = star_m * lvl_m
+    return {k: int(round(v * m)) for k, v in base.items()}
+
+
+def card_power(char_id: str, stars: int, level: int) -> int:
+    """Скалярная сила карты — для авто-сборки команды и сортировок."""
+    s = card_stats(char_id, stars, level)
+    return s["hp"] + s["atk"] * 6 + s["def"] * 4 + s["spd"] * 3

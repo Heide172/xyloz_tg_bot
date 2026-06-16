@@ -130,7 +130,7 @@ export const api = {
   gachaSetHeroine: (char_id: string) =>
     request<any>('/gacha/heroine', { method: 'POST', body: JSON.stringify({ char_id }) }),
   gachaDaily: () =>
-    request<{ claimed: boolean; amount: number; user_balance: number; daily_available: boolean }>(
+    request<{ claimed: boolean; amount: number; gems: number; daily_available: boolean }>(
       '/gacha/daily',
       { method: 'POST' }
     ),
@@ -139,6 +139,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ char_id })
     }),
+  gachaBuyGems: (gems: number) =>
+    request<{ bought: number; spent_cp: number; gems: number; cp_balance: number }>(
+      '/gacha/gems/buy',
+      { method: 'POST', body: JSON.stringify({ gems }) }
+    ),
+  gachaArena: () => request<any>('/gacha/arena', { method: 'POST' }),
+  gachaPvpQueue: () => request<any>('/gacha/pvp/queue', { method: 'POST' }),
+  gachaPvpCancel: () => request<any>('/gacha/pvp/cancel', { method: 'POST' }),
+  gachaPvpLadder: () => request<any>('/gacha/pvp/ladder'),
   gachaStarsInvoice: (stars: number) =>
     request<{ url: string; stars: number; hryvnia: number; rate: number }>(
       '/gacha/stars_invoice',

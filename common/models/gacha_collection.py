@@ -18,6 +18,9 @@ class GachaCollection(Base):
     copies = Column(Integer, nullable=False, default=1)
     obtained_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     affection = Column(Integer, nullable=False, default=0)  # «приласкать»: очки привязанности
+    # v2: уровень/опыт карты (ККИ-слой, docs/gacha_v2.md)
+    level = Column(Integer, nullable=False, default=1)
+    exp = Column(Integer, nullable=False, default=0)
 
     __table_args__ = (
         UniqueConstraint("user_id", "chat_id", "char_id", name="uq_gacha_user_chat_char"),

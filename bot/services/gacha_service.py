@@ -14,11 +14,17 @@ from common.logger.logger import get_logger
 from common.models.bot_setting import BotSetting
 from common.models.clicker_farm import ClickerFarm
 from common.models.gacha_collection import GachaCollection
+from common.models.gacha_roll_log import GachaRollLog
 from services.gacha_catalog import (
     BY_RARITY,
     CATALOG,
     DEFAULT_HEROINE_MULT,
     LEGACY_WORKER_MAP,
+    card_ability,
+    card_position,
+    card_power,
+    card_stats,
+    level_cap,
     star_mult,
 )
 from services.markets_service import (
@@ -33,18 +39,34 @@ logger = get_logger(__name__)
 _rng = secrets.SystemRandom()
 
 ROLL_COST = int(os.getenv("GACHA_ROLL_COST", "300"))
-X10_COST = int(os.getenv("GACHA_X10_COST", str(ROLL_COST * 9)))  # скидка ~1 крутка
+X10_COST = int(os.getenv("GACHA_X10_COST", str(ROLL_COST * 9)))  # legacy (v1), не используется в v2-крутке
 SSR_PITY = int(os.getenv("GACHA_SSR_PITY", "50"))
-UR_PITY = int(os.getenv("GACHA_UR_PITY", "90"))
-BANNER_RATEUP = float(os.getenv("GACHA_BANNER_RATEUP", "0.5"))  # доля баннерного среди UR
+UR_PITY = int(os.getenv("GACHA_UR_PITY", "90"))   # = HARD_PITY (гарант UR)
+HARD_PITY = UR_PITY
+SOFT_PITY_START = int(os.getenv("GACHA_SOFT_PITY", "75"))  # с этого счётчика растёт шанс UR
+BANNER_RATEUP = float(os.getenv("GACHA_BANNER_RATEUP", "0.5"))  # 50/50 баннерный среди UR
 # Из ролла исключён R — legacy-работницы (cherry..diamond) остаются
 # отдельной системой (доход по level), гача даёт только SR/SSR/UR поверх.
 BASE_WEIGHTS = {"SR": 0.80, "SSR": 0.18, "UR": 0.02}
-# Возврат гривнами за дубль 5★ (по редкости)
+UR_BASE_RATE = BASE_WEIGHTS["UR"]
+# Возврат гривнами за дубль 5★ (по редкости) — legacy v1.
 DUP_REFUND = {"R": 20, "SR": 80, "SSR": 300, "UR": 1500}
 
+# --- v2: валюта gems + экономика крутки (docs/gacha_v2.md, открытые параметры) ---
+CP_PER_GEM = int(os.getenv("GACHA_CP_PER_GEM", "300"))   # цена 1 gem в cp (через ферму/AMM)
+ROLL_GEMS = int(os.getenv("GACHA_ROLL_GEMS", "1"))       # x1 крутка
+X10_GEMS = int(os.getenv("GACHA_X10_GEMS", "9"))         # x10 (скидка ~1 крутка)
+DAILY_GEMS = int(os.getenv("GACHA_DAILY_GEMS", "1"))     # ежедневный бонус в gems
+# Возврат gems за дубль 5★ (закрытый цикл крутка↔дубль).
+DUP_REFUND_GEMS = {"R": 0, "SR": 0, "SSR": 1, "UR": 5}
+
+# --- v2: уровень/опыт карт ---
+EXP_BASE = int(os.getenv("GACHA_EXP_BASE", "50"))        # стоимость уровня L = EXP_BASE * L
+PVP_WIN_EXP = int(os.getenv("GACHA_PVP_WIN_EXP", "120"))
+PVP_LOSS_EXP = int(os.getenv("GACHA_PVP_LOSS_EXP", "45"))
+
 # Ежедневный бонус: одна выдача в сутки (UTC-календарный день).
-DAILY_BONUS = int(os.getenv("GACHA_DAILY_BONUS", str(ROLL_COST)))
+DAILY_BONUS = int(os.getenv("GACHA_DAILY_BONUS", str(ROLL_COST)))  # legacy v1
 # Длительность баннера в днях (для обратного отсчёта в UI).
 BANNER_DAYS = int(os.getenv("GACHA_BANNER_DAYS", "7"))
 # «Приласкать»: фразы героинь (cosmetic) + сколько привязанности за 1 bond-уровень.
@@ -146,43 +168,84 @@ def _grant(session, user_id: int, chat_id: int, char_id: str) -> dict:
         row.stars += 1
         return {"char_id": char_id, "rarity": rarity, "stars": row.stars,
                 "new": False, "refund": 0}
-    # уже 5★ — возврат гривнами
-    refund = DUP_REFUND.get(rarity, 0)
+    # уже 5★ — возврат gems (закрытый цикл крутка↔дубль)
+    refund = DUP_REFUND_GEMS.get(rarity, 0)
     return {"char_id": char_id, "rarity": rarity, "stars": 5,
             "new": False, "refund": refund}
 
 
-def _pick_rarity(farm: ClickerFarm) -> str:
+def _ur_chance(pity_ur: int) -> float:
+    """mihoyo soft pity: базовый шанс до SOFT_PITY_START, дальше линейный
+    рост до 1.0 на HARD_PITY."""
+    if pity_ur >= HARD_PITY:
+        return 1.0
+    if pity_ur < SOFT_PITY_START:
+        return UR_BASE_RATE
+    span = max(1, HARD_PITY - SOFT_PITY_START)
+    t = (pity_ur - SOFT_PITY_START + 1) / span
+    return min(1.0, UR_BASE_RATE + (1.0 - UR_BASE_RATE) * t)
+
+
+def _do_pull(farm: ClickerFarm) -> dict:
+    """Одна крутка: mihoyo-pity (soft/hard UR + SSR-гарант) + rate-up 50/50
+    с гарантом следующего UR баннерным. Мутирует pity-счётчики/флаг на farm,
+    возвращает результат + телеметрию."""
     farm.pity_ssr += 1
     farm.pity_ur += 1
-    if farm.pity_ur >= UR_PITY:
-        return "UR"
-    if farm.pity_ssr >= SSR_PITY:
-        return "SSR"
-    x = _rng.random()
-    acc = 0.0
-    for r in ("UR", "SSR", "SR"):
-        acc += BASE_WEIGHTS[r]
-        if x < acc:
-            return r
-    return "SR"
+    pity_ssr_at, pity_ur_at = farm.pity_ssr, farm.pity_ur
+    soft = hard = False
 
+    if farm.pity_ur >= HARD_PITY:
+        hard = True
+        rarity = "UR"
+    elif _rng.random() < _ur_chance(farm.pity_ur):
+        rarity = "UR"
+        soft = farm.pity_ur >= SOFT_PITY_START
+    elif farm.pity_ssr >= SSR_PITY:
+        rarity = "SSR"
+    else:
+        ssr_share = BASE_WEIGHTS["SSR"] / (BASE_WEIGHTS["SSR"] + BASE_WEIGHTS["SR"])
+        rarity = "SSR" if _rng.random() < ssr_share else "SR"
 
-def _pick_char(rarity: str) -> str:
+    rate_up_win = False
     if rarity == "UR":
         banner = get_banner()
-        if _rng.random() < BANNER_RATEUP:
-            return banner
-        return _rng.choice(BY_RARITY["UR"])
-    return _rng.choice(BY_RARITY[rarity])
+        if farm.rate_up_lost:
+            char_id, rate_up_win = banner, True
+            farm.rate_up_lost = 0
+        elif _rng.random() < BANNER_RATEUP:
+            char_id, rate_up_win = banner, True
+        else:
+            others = [c for c in BY_RARITY["UR"] if c != banner] or BY_RARITY["UR"]
+            char_id = _rng.choice(others)
+            farm.rate_up_lost = 1  # увели — следующий UR гарантированно баннерный
+    else:
+        char_id = _rng.choice(BY_RARITY[rarity])
 
-
-def _apply_pity_reset(farm: ClickerFarm, rarity: str) -> None:
     if rarity == "UR":
         farm.pity_ur = 0
         farm.pity_ssr = 0
     elif rarity == "SSR":
         farm.pity_ssr = 0
+
+    return {"char_id": char_id, "rarity": rarity, "pity_ssr_at": pity_ssr_at,
+            "pity_ur_at": pity_ur_at, "soft": soft, "hard": hard,
+            "rate_up_win": rate_up_win}
+
+
+def _exp_to_next(level: int) -> int:
+    return EXP_BASE * max(1, level)
+
+
+def add_card_exp(row: GachaCollection, amount: int) -> None:
+    """Начислить опыт карте с прокачкой уровня (кап по звёздам)."""
+    cap = level_cap(row.stars)
+    row.exp = (row.exp or 0) + max(0, amount)
+    while row.level < cap and row.exp >= _exp_to_next(row.level):
+        row.exp -= _exp_to_next(row.level)
+        row.level += 1
+    if row.level >= cap:
+        row.exp = min(row.exp, _exp_to_next(row.level))
 
 
 def ensure_migrated(session, farm: ClickerFarm) -> None:
@@ -248,47 +311,36 @@ def farm_multipliers(session, user_id: int, chat_id: int) -> tuple[float, float,
 def roll_sync(user_id: int, chat_id: int, count: int) -> dict:
     if count not in (1, 10):
         raise InvalidArgument("count: 1 или 10")
-    price = ROLL_COST if count == 1 else X10_COST
+    price = ROLL_GEMS if count == 1 else X10_GEMS
     session = SessionLocal()
     try:
         from services.clicker_service import _get_or_create_farm
 
         farm = _get_or_create_farm(session, user_id, chat_id)
         ensure_migrated(session, farm)
-        bal = _get_or_create_balance(session, user_id, chat_id)
-        if bal.balance < price:
-            raise InsufficientFunds(f"Нужно {price}, у тебя {bal.balance}")
-        bank = _get_or_create_bank(session, chat_id)
+        if (farm.gems or 0) < price:
+            raise InsufficientFunds(f"Нужно {price} gems, у тебя {farm.gems or 0}")
         now = datetime.utcnow()
-        bal.balance -= price
-        bal.updated_at = now
-        bank.balance += price
-        bank.updated_at = now
-        _log_tx(session, user_id, chat_id, -price, kind="gacha_roll",
-                note=f"x{count}")
-        _log_tx(session, None, chat_id, price, kind="gacha_roll_to_bank")
+        farm.gems = (farm.gems or 0) - price
 
         results = []
-        best_rarity_idx = -1
-        order = ["R", "SR", "SSR", "UR"]
         for _ in range(count):
-            rarity = _pick_rarity(farm)
-            char_id = _pick_char(rarity)
-            _apply_pity_reset(farm, rarity)
-            g = _grant(session, user_id, chat_id, char_id)
+            pull = _do_pull(farm)
+            g = _grant(session, user_id, chat_id, pull["char_id"])
             results.append(g)
-            best_rarity_idx = max(best_rarity_idx, order.index(rarity))
+            # телеметрия теста (docs/gacha_v2.md)
+            session.add(GachaRollLog(
+                user_id=user_id, chat_id=chat_id, char_id=pull["char_id"],
+                rarity=pull["rarity"], pity_ssr=pull["pity_ssr_at"],
+                pity_ur=pull["pity_ur_at"], soft_pity=pull["soft"],
+                hard_pity=pull["hard"], rate_up_win=pull["rate_up_win"],
+                is_x10=(count == 10), gem_cost=(price if not results[:-1] else 0),
+                created_at=now,
+            ))
 
-        # x10 гарант SR+: если всё R — апгрейдим последний до случайного SR
-        if count == 10 and best_rarity_idx < 1:
-            cid = _rng.choice(BY_RARITY["SR"])
-            results[-1] = _grant(session, user_id, chat_id, cid)
-
-        total_refund = sum(r["refund"] for r in results)
+        total_refund = sum(r["refund"] for r in results)  # gems
         if total_refund > 0:
-            bal.balance += total_refund
-            _log_tx(session, user_id, chat_id, total_refund,
-                    kind="gacha_dup_refund", note="дубли 5★")
+            farm.gems = (farm.gems or 0) + total_refund
 
         farm.gacha_rolls += count
         farm.updated_at = now
@@ -309,7 +361,7 @@ def roll_sync(user_id: int, chat_id: int, count: int) -> dict:
             "refunded": total_refund,
             "pity_ssr": farm.pity_ssr,
             "pity_ur": farm.pity_ur,
-            "user_balance": bal.balance,
+            "gems": farm.gems,
         }
         session.commit()
         return out
@@ -339,6 +391,8 @@ def collection_sync(user_id: int, chat_id: int) -> dict:
         items = []
         for cid, c in CATALOG.items():
             rec = owned.get(cid)
+            stars = rec.stars if rec else 0
+            level = rec.level if rec else 1
             items.append({
                 "char_id": cid,
                 "name": c.name,
@@ -346,10 +400,19 @@ def collection_sync(user_id: int, chat_id: int) -> dict:
                 "role": c.role,
                 "asset": c.asset,
                 "owned": rec is not None,
-                "stars": rec.stars if rec else 0,
+                "stars": stars,
                 "base_value": c.base_value,
                 "affection": rec.affection if rec else 0,
                 "bond": (rec.affection // AFFECTION_PER_BOND) if rec else 0,
+                # v2: ККИ-слой
+                "level": level,
+                "exp": rec.exp if rec else 0,
+                "exp_to_next": _exp_to_next(level),
+                "level_cap": level_cap(stars if stars else 1),
+                "position": card_position(cid),
+                "ability": card_ability(cid),
+                "stats": card_stats(cid, max(1, stars), level),
+                "power": card_power(cid, max(1, stars), level),
             })
         out = {
             "items": items,
@@ -360,13 +423,22 @@ def collection_sync(user_id: int, chat_id: int) -> dict:
             "pity_ur": farm.pity_ur,
             "ssr_pity": SSR_PITY,
             "ur_pity": UR_PITY,
-            "roll_cost": ROLL_COST,
-            "x10_cost": X10_COST,
+            "soft_pity": SOFT_PITY_START,
             "gacha_rolls": farm.gacha_rolls,
             "rates": rarity_rates(),
             "banner_rateup": round(BANNER_RATEUP * 100),
             "daily_available": _daily_available(farm),
-            "daily_amount": DAILY_BONUS,
+            # v2: валюта gems
+            "gems": farm.gems or 0,
+            "cp_balance": int(farm.cp_balance or 0),
+            "roll_cost": ROLL_GEMS,
+            "x10_cost": X10_GEMS,
+            "cp_per_gem": CP_PER_GEM,
+            "daily_amount": DAILY_GEMS,
+            # PvP
+            "pvp_elo": farm.pvp_elo,
+            "pvp_wins": farm.pvp_wins,
+            "pvp_losses": farm.pvp_losses,
         }
         session.commit()
         return out
@@ -381,7 +453,7 @@ def _daily_available(farm: ClickerFarm) -> bool:
 
 
 def daily_sync(user_id: int, chat_id: int) -> dict:
-    """Забрать ежедневный бонус (раз в сутки). Кредитует баланс гривнами."""
+    """Забрать ежедневный бонус (раз в сутки). Кредитует gems (v2)."""
     session = SessionLocal()
     try:
         from services.clicker_service import _get_or_create_farm
@@ -390,18 +462,42 @@ def daily_sync(user_id: int, chat_id: int) -> dict:
         if not _daily_available(farm):
             raise InvalidArgument("Сегодня бонус уже получен")
         now = datetime.utcnow()
-        bal = _get_or_create_balance(session, user_id, chat_id)
-        bal.balance += DAILY_BONUS
-        bal.updated_at = now
+        farm.gems = (farm.gems or 0) + DAILY_GEMS
         farm.last_daily_at = now
         farm.updated_at = now
-        _log_tx(session, user_id, chat_id, DAILY_BONUS, kind="gacha_daily")
         session.commit()
         return {
             "claimed": True,
-            "amount": DAILY_BONUS,
-            "user_balance": bal.balance,
+            "amount": DAILY_GEMS,
+            "gems": farm.gems,
             "daily_available": False,
+        }
+    finally:
+        session.close()
+
+
+def buy_gems_sync(user_id: int, chat_id: int, gems: int) -> dict:
+    """Купить gems за cp фермы (по курсу CP_PER_GEM). docs/gacha_v2.md."""
+    gems = int(gems)
+    if gems <= 0:
+        raise InvalidArgument("gems: положительное число")
+    cost_cp = gems * CP_PER_GEM
+    session = SessionLocal()
+    try:
+        from services.clicker_service import _get_or_create_farm
+
+        farm = _get_or_create_farm(session, user_id, chat_id)
+        if int(farm.cp_balance or 0) < cost_cp:
+            raise InsufficientFunds(f"Нужно {cost_cp} cp, у тебя {int(farm.cp_balance or 0)}")
+        farm.cp_balance -= cost_cp
+        farm.gems = (farm.gems or 0) + gems
+        farm.updated_at = datetime.utcnow()
+        session.commit()
+        return {
+            "bought": gems,
+            "spent_cp": cost_cp,
+            "gems": farm.gems,
+            "cp_balance": int(farm.cp_balance),
         }
     finally:
         session.close()
