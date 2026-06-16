@@ -42,6 +42,8 @@ class ClickerFarm(Base):
     pvp_elo = Column(Integer, nullable=False, default=1000)
     pvp_wins = Column(Integer, nullable=False, default=0)
     pvp_losses = Column(Integer, nullable=False, default=0)
+    # v2: боевой состав игрока — [{char_id, row: 'front'|'back'}], до 5. null = авто-топ-5.
+    team = Column(JSONB, nullable=True)
 
     last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 

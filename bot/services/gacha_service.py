@@ -60,6 +60,8 @@ DAILY_GEMS = int(os.getenv("GACHA_DAILY_GEMS", "1"))     # ежедневный 
 # Возврат gems за дубль 5★ (закрытый цикл крутка↔дубль).
 DUP_REFUND_GEMS = {"R": 0, "SR": 0, "SSR": 1, "UR": 5}
 
+TEAM_SIZE = 5  # размер боевого состава
+
 # --- v2: уровень/опыт карт ---
 EXP_BASE = int(os.getenv("GACHA_EXP_BASE", "50"))        # стоимость уровня L = EXP_BASE * L
 PVP_WIN_EXP = int(os.getenv("GACHA_PVP_WIN_EXP", "120"))
@@ -428,6 +430,8 @@ def collection_sync(user_id: int, chat_id: int) -> dict:
             "rates": rarity_rates(),
             "banner_rateup": round(BANNER_RATEUP * 100),
             "daily_available": _daily_available(farm),
+            "team": _team_slots(farm, owned),
+            "team_size": TEAM_SIZE,
             # v2: валюта gems
             "gems": farm.gems or 0,
             "cp_balance": int(farm.cp_balance or 0),
@@ -529,6 +533,68 @@ def pet_sync(user_id: int, chat_id: int, char_id: str) -> dict:
             "bond": row.affection // AFFECTION_PER_BOND,
             "line": _rng.choice(PET_LINES),
         }
+    finally:
+        session.close()
+
+
+def _team_slots(farm: ClickerFarm, owned: dict) -> list:
+    """Сохранённый состав игрока (валидируется по владению) или авто-топ-5.
+    Возвращает [{char_id, row}] длиной до TEAM_SIZE."""
+    saved = farm.team if isinstance(farm.team, list) else None
+    slots, seen = [], set()
+    if saved:
+        for s in saved:
+            cid = (s or {}).get("char_id")
+            row = (s or {}).get("row")
+            if cid in owned and cid not in seen and len(slots) < TEAM_SIZE:
+                slots.append({"char_id": cid,
+                              "row": row if row in ("front", "back") else card_position(cid)})
+                seen.add(cid)
+    if not slots:
+        ordered = sorted(
+            owned.values(),
+            key=lambda r: card_power(r.char_id, r.stars, r.level),
+            reverse=True,
+        )[:TEAM_SIZE]
+        slots = [{"char_id": r.char_id, "row": card_position(r.char_id)} for r in ordered]
+    return slots
+
+
+def set_team_sync(user_id: int, chat_id: int, slots: list) -> dict:
+    """Сохранить боевой состав (до TEAM_SIZE карт + ряд каждой)."""
+    if not isinstance(slots, list) or len(slots) > TEAM_SIZE:
+        raise InvalidArgument(f"Состав: до {TEAM_SIZE} карт")
+    session = SessionLocal()
+    try:
+        from services.clicker_service import _get_or_create_farm
+
+        owned = {
+            r.char_id
+            for r in session.query(GachaCollection).filter(
+                GachaCollection.user_id == user_id,
+                GachaCollection.chat_id == chat_id,
+            ).all()
+        }
+        clean, seen = [], set()
+        for s in slots:
+            cid = (s or {}).get("char_id")
+            row = (s or {}).get("row")
+            if cid not in CATALOG:
+                continue
+            if cid not in owned:
+                raise InvalidArgument("В составе карта, которой нет в коллекции")
+            if cid in seen:
+                continue
+            clean.append({"char_id": cid,
+                          "row": row if row in ("front", "back") else card_position(cid)})
+            seen.add(cid)
+        if not clean:
+            raise InvalidArgument("Добавь в состав хотя бы одну карту")
+        farm = _get_or_create_farm(session, user_id, chat_id)
+        farm.team = clean
+        farm.updated_at = datetime.utcnow()
+        session.commit()
+        return {"team": clean}
     finally:
         session.close()
 

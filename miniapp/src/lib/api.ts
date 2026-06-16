@@ -144,6 +144,11 @@ export const api = {
       '/gacha/gems/buy',
       { method: 'POST', body: JSON.stringify({ gems }) }
     ),
+  gachaSetTeam: (slots: { char_id: string; row: string }[]) =>
+    request<{ team: { char_id: string; row: string }[] }>('/gacha/team/set', {
+      method: 'POST',
+      body: JSON.stringify({ slots })
+    }),
   gachaArena: () => request<any>('/gacha/arena', { method: 'POST' }),
   gachaPvpQueue: () => request<any>('/gacha/pvp/queue', { method: 'POST' }),
   gachaPvpCancel: () => request<any>('/gacha/pvp/cancel', { method: 'POST' }),

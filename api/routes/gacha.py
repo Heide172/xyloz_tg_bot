@@ -21,6 +21,7 @@ from services.gacha_service import (
     roll_sync,
     set_banner,
     set_heroine_sync,
+    set_team_sync,
 )
 from services.pvp_service import (
     arena_fight_sync,
@@ -59,6 +60,15 @@ class StarsInvoiceReq(BaseModel):
 
 class BuyGemsReq(BaseModel):
     gems: int = Field(ge=1, le=10000, description="сколько gems купить за cp")
+
+
+class TeamSlot(BaseModel):
+    char_id: str
+    row: str = Field(default="back", description="front | back")
+
+
+class TeamReq(BaseModel):
+    slots: list[TeamSlot] = Field(default_factory=list)
 
 
 def _err(e: Exception) -> HTTPException:
@@ -132,10 +142,22 @@ async def gems_buy(req: BuyGemsReq, auth: TgWebAppAuth = Depends(require_auth)) 
 
 @router.get("/team")
 async def team(auth: TgWebAppAuth = Depends(require_auth)) -> dict:
-    """Авто-команда (топ-5 карт по силе) — превью состава."""
+    """Текущий боевой состав (с расстановкой) + суммарная сила."""
     chat_id = await require_chat_membership(auth)
     user_id = ensure_db_user(auth)
     return await asyncio.to_thread(auto_team_sync, user_id, chat_id)
+
+
+@router.post("/team/set")
+async def team_set(req: TeamReq, auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    """Сохранить состав: до 5 карт + ряд (front/back) каждой."""
+    chat_id = await require_chat_membership(auth)
+    user_id = ensure_db_user(auth)
+    try:
+        slots = [s.dict() for s in req.slots]
+        return await asyncio.to_thread(set_team_sync, user_id, chat_id, slots)
+    except Exception as e:
+        raise _err(e)
 
 
 @router.post("/arena")

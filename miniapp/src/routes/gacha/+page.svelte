@@ -12,7 +12,7 @@
   let err: string | null = null;
   let busy = false;
 
-  type Tab = 'home' | 'spin' | 'collection';
+  type Tab = 'home' | 'spin' | 'collection' | 'arena';
   let tab: Tab = 'home';
 
   $: search = typeof window !== 'undefined' ? window.location.search : '';
@@ -67,6 +67,11 @@
   async function refresh() {
     try {
       [balance, col] = await Promise.all([api.balance(), api.gachaCollection()]);
+      if (col && !teamInit) {
+        teamSlots = (col.team ?? []).map((s: any) => ({ char_id: s.char_id, row: s.row }));
+        savedTeamKey = teamKey(teamSlots);
+        teamInit = true;
+      }
     } catch (e: any) {
       err = e?.message;
     } finally {
@@ -314,6 +319,7 @@
     if (arenaBusy) return;
     arenaBusy = true;
     try {
+      if (teamDirty) await saveTeam();
       const r = await api.gachaArena();
       arenaResult = r;
       arenaOpen = true;
@@ -332,6 +338,7 @@
     if (arenaBusy) return;
     arenaBusy = true;
     try {
+      if (teamDirty) await saveTeam();
       const r = await api.gachaPvpQueue();
       if (r.matched) {
         arenaResult = r;
@@ -354,6 +361,60 @@
       ladder = r.ladder;
     } catch {
       ladder = [];
+    }
+  }
+
+  // ---------- сборка команды ----------
+  let teamSlots: { char_id: string; row: string }[] = [];
+  let savedTeamKey = '';
+  let teamInit = false;
+  let teamSaving = false;
+
+  const teamKey = (slots: { char_id: string; row: string }[]) =>
+    slots.map((s) => `${s.char_id}:${s.row}`).join('|');
+
+  $: teamSizeMax = col?.team_size ?? 5;
+  $: itemMap = col ? Object.fromEntries(col.items.map((i: any) => [i.char_id, i])) : {};
+  $: ownedItems = col ? col.items.filter((i: any) => i.owned) : [];
+  $: teamDirty = teamKey(teamSlots) !== savedTeamKey;
+  $: teamPower = teamSlots.reduce((s, sl) => s + (itemMap[sl.char_id]?.power ?? 0), 0);
+  $: frontSlots = teamSlots.filter((s) => s.row === 'front');
+  $: backSlots = teamSlots.filter((s) => s.row === 'back');
+
+  function addToTeam(it: any) {
+    if (teamSlots.some((s) => s.char_id === it.char_id)) return;
+    if (teamSlots.length >= teamSizeMax) {
+      toast(`Максимум ${teamSizeMax} карт`);
+      return;
+    }
+    teamSlots = [...teamSlots, { char_id: it.char_id, row: it.position || 'back' }];
+    haptic('light');
+  }
+  function removeFromTeam(cid: string) {
+    teamSlots = teamSlots.filter((s) => s.char_id !== cid);
+    haptic('light');
+  }
+  function toggleRow(cid: string) {
+    teamSlots = teamSlots.map((s) =>
+      s.char_id === cid ? { ...s, row: s.row === 'front' ? 'back' : 'front' } : s
+    );
+    haptic('light');
+  }
+  async function saveTeam() {
+    if (teamSaving || !teamSlots.length) return;
+    teamSaving = true;
+    try {
+      const r = await api.gachaSetTeam(teamSlots);
+      teamSlots = r.team.map((s) => ({ char_id: s.char_id, row: s.row }));
+      savedTeamKey = teamKey(teamSlots);
+      haptic('success');
+      toast('Состав сохранён');
+      refresh();
+    } catch (e: any) {
+      showAlert(e?.message ?? 'Ошибка');
+      haptic('error');
+    } finally {
+      teamSaving = false;
     }
   }
 
@@ -434,6 +495,7 @@
     <button class="g-tab" class:on={tab === 'home'} on:click={() => (tab = 'home')}>Меню</button>
     <button class="g-tab" class:on={tab === 'spin'} on:click={() => (tab = 'spin')}>Крутка</button>
     <button class="g-tab" class:on={tab === 'collection'} on:click={() => (tab = 'collection')}>Коллекция</button>
+    <button class="g-tab" class:on={tab === 'arena'} on:click={() => (tab = 'arena')}>Арена</button>
   </div>
 
   <div class="scrollY g-scroll">
@@ -489,9 +551,9 @@
               <span class="g-act-ic ic-green">✿</span>
               <span class="g-act-txt"><b>Ферма</b><small>Доход ср/ур</small></span>
             </a>
-            <button class="g-act act-arena" on:click={fightArena} disabled={arenaBusy}>
+            <button class="g-act act-arena" on:click={() => (tab = 'arena')}>
               <span class="g-act-ic ic-red">⚔</span>
-              <span class="g-act-txt"><b>Арена</b><small>{arenaBusy ? 'бой…' : 'PvP-бой 5×5'}</small></span>
+              <span class="g-act-txt"><b>Арена</b><small>Состав и бой 5×5</small></span>
             </button>
             <button class="g-act act-support" on:click={() => (donateOpen = true)}>
               <span class="g-act-ic ic-gold">★</span>
@@ -571,6 +633,98 @@
               </button>
             {/each}
           </div>
+        </div>
+      {/if}
+
+      <!-- ===================== АРЕНА (СБОРКА + БОЙ) ===================== -->
+      {#if tab === 'arena'}
+        <div class="g-pad">
+          <div class="g-team-head">
+            <div>
+              <b>Боевой состав</b>
+              <div class="g-sub">{teamSlots.length}/{teamSizeMax} · 💪 {fmtCoins(teamPower)} · ELO {col.pvp_elo} ({col.pvp_wins}/{col.pvp_losses})</div>
+            </div>
+            <button class="g-save" disabled={!teamDirty || teamSaving} on:click={saveTeam}>
+              {teamDirty ? 'Сохранить' : 'Сохранено ✓'}
+            </button>
+          </div>
+
+          <div class="g-form">
+            <div class="g-form-row">
+              <div class="g-form-cap">🛡 Фронт <span class="g-sub">принимает удар первым</span></div>
+              <div class="g-form-slots">
+                {#each frontSlots as s (s.char_id)}
+                  {@const it = itemMap[s.char_id]}
+                  <div class="g-tcard" style="border-color:{RAR[it?.rarity]?.color ?? '#555'}">
+                    <img src={it?.asset} alt={it?.name} on:error={imgErr} />
+                    <div class="g-tcard-name">{it?.name}</div>
+                    <div class="g-tcard-ctl">
+                      <button on:click={() => toggleRow(s.char_id)} title="в бэк">↧</button>
+                      <button on:click={() => removeFromTeam(s.char_id)} title="убрать">✕</button>
+                    </div>
+                  </div>
+                {/each}
+                {#if !frontSlots.length}<div class="g-form-empty">пусто — поставь танков сюда</div>{/if}
+              </div>
+            </div>
+            <div class="g-form-row">
+              <div class="g-form-cap">🎯 Бэк <span class="g-sub">бьёт из-за фронта</span></div>
+              <div class="g-form-slots">
+                {#each backSlots as s (s.char_id)}
+                  {@const it = itemMap[s.char_id]}
+                  <div class="g-tcard" style="border-color:{RAR[it?.rarity]?.color ?? '#555'}">
+                    <img src={it?.asset} alt={it?.name} on:error={imgErr} />
+                    <div class="g-tcard-name">{it?.name}</div>
+                    <div class="g-tcard-ctl">
+                      <button on:click={() => toggleRow(s.char_id)} title="во фронт">↥</button>
+                      <button on:click={() => removeFromTeam(s.char_id)} title="убрать">✕</button>
+                    </div>
+                  </div>
+                {/each}
+                {#if !backSlots.length}<div class="g-form-empty">пусто — дамагеры сюда</div>{/if}
+              </div>
+            </div>
+          </div>
+
+          <div class="g-roster-h">Твои карты — нажми, чтобы добавить/убрать</div>
+          {#if !ownedItems.length}
+            <div class="g-sub" style="padding:8px 2px">Пока нет карт — собери их в крутке.</div>
+          {/if}
+          <div class="g-roster">
+            {#each ownedItems as it (it.char_id)}
+              {@const inTeam = teamSlots.some((s) => s.char_id === it.char_id)}
+              <button
+                class="g-rcard"
+                class:inteam={inTeam}
+                style="border-color:{RAR[it.rarity].color}"
+                on:click={() => (inTeam ? removeFromTeam(it.char_id) : addToTeam(it))}
+              >
+                <img src={it.asset} alt={it.name} on:error={imgErr} />
+                <span class="g-rcard-lvl">Ур{it.level}</span>
+                {#if inTeam}<span class="g-rcard-on">✓</span>{/if}
+              </button>
+            {/each}
+          </div>
+
+          <div class="g-arena-fight">
+            <button class="g-pull x10" disabled={arenaBusy || !teamSlots.length} on:click={fightArena}>
+              <span class="g-pull-h">⚔ В бой (×бот)</span>
+              <span class="g-pull-c">{arenaBusy ? 'бой…' : 'мгновенно'}</span>
+            </button>
+            <button class="g-pull x1" disabled={arenaBusy || !teamSlots.length} on:click={matchmake}>
+              <span class="g-pull-h">Матчмейк</span>
+              <span class="g-pull-c gold">PvP-очередь</span>
+            </button>
+          </div>
+          <button class="g-ladder-btn" on:click={openLadder}>🏆 Ладдер чата</button>
+          {#if ladder}
+            <div class="g-ladder">
+              {#each ladder as row, i (row.user_id)}
+                <div class="g-ladder-row"><span>{i + 1}. {row.name}</span><span>{row.elo} · {row.wins}/{row.losses}</span></div>
+              {/each}
+              {#if !ladder.length}<div class="g-sub" style="text-align:center">Пока пусто</div>{/if}
+            </div>
+          {/if}
         </div>
       {/if}
     {/if}
@@ -2430,6 +2584,185 @@
     padding: 7px 11px;
     border-radius: 9px;
     background: rgba(255, 255, 255, 0.05);
+  }
+
+  /* v2: сборка команды */
+  .g-team-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .g-team-head b {
+    font-size: 16px;
+  }
+  .g-save {
+    padding: 9px 16px;
+    border-radius: 11px;
+    border: 1px solid rgba(255, 200, 90, 0.5);
+    background: linear-gradient(180deg, #ffd76b, #ff9b3b);
+    color: #4a2c00;
+    font-family: Manrope, sans-serif;
+    font-weight: 800;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .g-save:disabled {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: #7fd0a0;
+  }
+  .g-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .g-form-row {
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: #13141a;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .g-form-cap {
+    font-size: 12px;
+    font-weight: 800;
+    color: #cfd3db;
+    margin-bottom: 8px;
+  }
+  .g-form-cap .g-sub {
+    display: inline;
+    font-weight: 600;
+    margin-left: 4px;
+  }
+  .g-form-slots {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-height: 64px;
+  }
+  .g-form-empty {
+    align-self: center;
+    font-size: 11px;
+    color: #5b616d;
+    font-weight: 600;
+  }
+  .g-tcard {
+    width: 72px;
+    border-radius: 11px;
+    overflow: hidden;
+    border: 1.5px solid #555;
+    background: #0b0c10;
+    position: relative;
+  }
+  .g-tcard img {
+    width: 100%;
+    aspect-ratio: 1/1;
+    object-fit: cover;
+    display: block;
+  }
+  .g-tcard-name {
+    font-size: 9px;
+    font-weight: 700;
+    text-align: center;
+    padding: 2px 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #eef0f4;
+  }
+  .g-tcard-ctl {
+    display: flex;
+  }
+  .g-tcard-ctl button {
+    flex: 1;
+    border: none;
+    background: rgba(255, 255, 255, 0.08);
+    color: #dfe2e8;
+    font-size: 12px;
+    padding: 4px 0;
+    cursor: pointer;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .g-tcard-ctl button:first-child {
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .g-roster-h {
+    margin: 16px 0 8px;
+    font-size: 11px;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #7e8492;
+    font-weight: 800;
+  }
+  .g-roster {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 7px;
+  }
+  .g-rcard {
+    position: relative;
+    border-radius: 9px;
+    overflow: hidden;
+    border: 1.5px solid #555;
+    background: #0b0c10;
+    padding: 0;
+    cursor: pointer;
+  }
+  .g-rcard img {
+    width: 100%;
+    aspect-ratio: 1/1;
+    object-fit: cover;
+    display: block;
+  }
+  .g-rcard.inteam {
+    outline: 2px solid #7fd0a0;
+    outline-offset: -2px;
+  }
+  .g-rcard.inteam img {
+    opacity: 0.55;
+  }
+  .g-rcard-lvl {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    font-size: 8px;
+    font-weight: 800;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 1px 0;
+  }
+  .g-rcard-on {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #7fd0a0;
+    color: #08291a;
+    font-size: 11px;
+    font-weight: 900;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .g-arena-fight {
+    display: flex;
+    gap: 12px;
+    margin-top: 18px;
+  }
+  .g-ladder-btn {
+    width: 100%;
+    margin-top: 12px;
+    padding: 11px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: #dfe2e8;
+    font-weight: 700;
+    font-size: 13px;
+    cursor: pointer;
   }
 
   /* toast */

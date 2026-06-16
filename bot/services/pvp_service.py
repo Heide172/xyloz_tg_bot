@@ -71,13 +71,13 @@ def _queue_key(chat_id: int) -> str:
 
 # ---------------- команды ----------------
 
-def _team_card(char_id: str, stars: int, level: int) -> dict:
+def _team_card(char_id: str, stars: int, level: int, position: str | None = None) -> dict:
     c = CATALOG[char_id]
     return {
         "char_id": char_id,
         "name": c.name,
         "rarity": c.rarity,
-        "position": card_position(char_id),
+        "position": position if position in ("front", "back") else card_position(char_id),
         "ability": card_ability(char_id),
         "stars": stars,
         "level": level,
@@ -86,7 +86,11 @@ def _team_card(char_id: str, stars: int, level: int) -> dict:
 
 
 def _collect_team(session, user_id: int, chat_id: int):
-    """Топ-TEAM_SIZE собственных карт по силе. Возвращает (team_cards, rows)."""
+    """Боевой состав игрока: сохранённый (с расстановкой) либо авто-топ-TEAM_SIZE.
+    Возвращает (team_cards, rows) — rows для начисления опыта."""
+    from services.clicker_service import _get_or_create_farm
+
+    farm = _get_or_create_farm(session, user_id, chat_id)
     rows = (
         session.query(GachaCollection)
         .filter(
@@ -95,11 +99,29 @@ def _collect_team(session, user_id: int, chat_id: int):
         )
         .all()
     )
-    rows = [r for r in rows if r.char_id in CATALOG]
-    rows.sort(key=lambda r: card_power(r.char_id, r.stars, r.level), reverse=True)
-    top = rows[:TEAM_SIZE]
-    team = [_team_card(r.char_id, r.stars, r.level) for r in top]
-    return team, top
+    owned = {r.char_id: r for r in rows if r.char_id in CATALOG}
+
+    team, used = [], []
+    saved = farm.team if isinstance(farm.team, list) else None
+    if saved:
+        seen = set()
+        for slot in saved:
+            cid = (slot or {}).get("char_id")
+            row = (slot or {}).get("row")
+            rec = owned.get(cid)
+            if rec and cid not in seen and len(team) < TEAM_SIZE:
+                team.append(_team_card(cid, rec.stars, rec.level, row))
+                used.append(rec)
+                seen.add(cid)
+    if not team:
+        ordered = sorted(
+            owned.values(),
+            key=lambda r: card_power(r.char_id, r.stars, r.level),
+            reverse=True,
+        )[:TEAM_SIZE]
+        team = [_team_card(r.char_id, r.stars, r.level) for r in ordered]
+        used = ordered
+    return team, used
 
 
 def auto_team_sync(user_id: int, chat_id: int) -> dict:
