@@ -129,6 +129,16 @@ export const api = {
     request<any>('/gacha/roll', { method: 'POST', body: JSON.stringify({ count }) }),
   gachaSetHeroine: (char_id: string) =>
     request<any>('/gacha/heroine', { method: 'POST', body: JSON.stringify({ char_id }) }),
+  gachaDaily: () =>
+    request<{ claimed: boolean; amount: number; user_balance: number; daily_available: boolean }>(
+      '/gacha/daily',
+      { method: 'POST' }
+    ),
+  gachaPet: (char_id: string) =>
+    request<{ char_id: string; affection: number; bond: number; line: string }>('/gacha/pet', {
+      method: 'POST',
+      body: JSON.stringify({ char_id })
+    }),
   gachaStarsInvoice: (stars: number) =>
     request<{ url: string; stars: number; hryvnia: number; rate: number }>(
       '/gacha/stars_invoice',

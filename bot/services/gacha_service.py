@@ -7,7 +7,7 @@ worker-персонажам, умноженный на множитель акт
 import math
 import os
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from common.db.db import SessionLocal
 from common.logger.logger import get_logger
@@ -43,7 +43,24 @@ BASE_WEIGHTS = {"SR": 0.80, "SSR": 0.18, "UR": 0.02}
 # Возврат гривнами за дубль 5★ (по редкости)
 DUP_REFUND = {"R": 20, "SR": 80, "SSR": 300, "UR": 1500}
 
+# Ежедневный бонус: одна выдача в сутки (UTC-календарный день).
+DAILY_BONUS = int(os.getenv("GACHA_DAILY_BONUS", str(ROLL_COST)))
+# Длительность баннера в днях (для обратного отсчёта в UI).
+BANNER_DAYS = int(os.getenv("GACHA_BANNER_DAYS", "7"))
+# «Приласкать»: фразы героинь (cosmetic) + сколько привязанности за 1 bond-уровень.
+AFFECTION_PER_BOND = 10
+PET_LINES = [
+    "Скучала по тебе ♥",
+    "Опять ты~ непоседа",
+    "Покрутишь ещё разок?",
+    "Ммм… нежнее.",
+    "Ты сегодня в ударе!",
+    "Я только твоя.",
+    "Готова к призыву~",
+]
+
 _BANNER_KEY = "gacha_banner"
+_BANNER_UNTIL_KEY = "gacha_banner_until"
 
 
 def _ensure_bs_table() -> None:
@@ -65,20 +82,42 @@ def get_banner() -> str:
     return BY_RARITY["UR"][0]
 
 
-def set_banner(char_id: str) -> None:
-    if char_id not in CATALOG or CATALOG[char_id].rarity != "UR":
-        raise InvalidArgument("Баннер должен быть UR-персонажем")
+def get_banner_until() -> str | None:
+    """ISO-время окончания текущего баннера (UTC) или None, если не задано."""
     _ensure_bs_table()
     s = SessionLocal()
     try:
-        row = s.query(BotSetting).filter(BotSetting.key == _BANNER_KEY).first()
-        if row:
-            row.value = char_id
-        else:
-            s.add(BotSetting(key=_BANNER_KEY, value=char_id))
+        row = s.query(BotSetting).filter(BotSetting.key == _BANNER_UNTIL_KEY).first()
+        return row.value if row else None
+    finally:
+        s.close()
+
+
+def _upsert_setting(s, key: str, value: str) -> None:
+    row = s.query(BotSetting).filter(BotSetting.key == key).first()
+    if row:
+        row.value = value
+    else:
+        s.add(BotSetting(key=key, value=value))
+
+
+def set_banner(char_id: str, days: int = BANNER_DAYS) -> None:
+    if char_id not in CATALOG or CATALOG[char_id].rarity != "UR":
+        raise InvalidArgument("Баннер должен быть UR-персонажем")
+    _ensure_bs_table()
+    until = (datetime.utcnow() + timedelta(days=days)).isoformat()
+    s = SessionLocal()
+    try:
+        _upsert_setting(s, _BANNER_KEY, char_id)
+        _upsert_setting(s, _BANNER_UNTIL_KEY, until)
         s.commit()
     finally:
         s.close()
+
+
+def rarity_rates() -> dict:
+    """Отображаемые шансы крутки в процентах (R из гачи исключён)."""
+    return {r: round(w * 100, 1) for r, w in BASE_WEIGHTS.items()}
 
 
 def _grant(session, user_id: int, chat_id: int, char_id: str) -> dict:
@@ -309,11 +348,14 @@ def collection_sync(user_id: int, chat_id: int) -> dict:
                 "owned": rec is not None,
                 "stars": rec.stars if rec else 0,
                 "base_value": c.base_value,
+                "affection": rec.affection if rec else 0,
+                "bond": (rec.affection // AFFECTION_PER_BOND) if rec else 0,
             })
         out = {
             "items": items,
             "active_heroine": farm.active_heroine,
             "banner": get_banner(),
+            "banner_until": get_banner_until(),
             "pity_ssr": farm.pity_ssr,
             "pity_ur": farm.pity_ur,
             "ssr_pity": SSR_PITY,
@@ -321,9 +363,76 @@ def collection_sync(user_id: int, chat_id: int) -> dict:
             "roll_cost": ROLL_COST,
             "x10_cost": X10_COST,
             "gacha_rolls": farm.gacha_rolls,
+            "rates": rarity_rates(),
+            "banner_rateup": round(BANNER_RATEUP * 100),
+            "daily_available": _daily_available(farm),
+            "daily_amount": DAILY_BONUS,
         }
         session.commit()
         return out
+    finally:
+        session.close()
+
+
+def _daily_available(farm: ClickerFarm) -> bool:
+    """Доступен ли ежедневный бонус (новый UTC-календарный день)."""
+    last = farm.last_daily_at
+    return last is None or last.date() < datetime.utcnow().date()
+
+
+def daily_sync(user_id: int, chat_id: int) -> dict:
+    """Забрать ежедневный бонус (раз в сутки). Кредитует баланс гривнами."""
+    session = SessionLocal()
+    try:
+        from services.clicker_service import _get_or_create_farm
+
+        farm = _get_or_create_farm(session, user_id, chat_id)
+        if not _daily_available(farm):
+            raise InvalidArgument("Сегодня бонус уже получен")
+        now = datetime.utcnow()
+        bal = _get_or_create_balance(session, user_id, chat_id)
+        bal.balance += DAILY_BONUS
+        bal.updated_at = now
+        farm.last_daily_at = now
+        farm.updated_at = now
+        _log_tx(session, user_id, chat_id, DAILY_BONUS, kind="gacha_daily")
+        session.commit()
+        return {
+            "claimed": True,
+            "amount": DAILY_BONUS,
+            "user_balance": bal.balance,
+            "daily_available": False,
+        }
+    finally:
+        session.close()
+
+
+def pet_sync(user_id: int, chat_id: int, char_id: str) -> dict:
+    """«Приласкать» собранного персонажа: +1 привязанность, случайная фраза."""
+    if char_id not in CATALOG:
+        raise InvalidArgument("Нет такого персонажа")
+    session = SessionLocal()
+    try:
+        row = (
+            session.query(GachaCollection)
+            .filter(
+                GachaCollection.user_id == user_id,
+                GachaCollection.chat_id == chat_id,
+                GachaCollection.char_id == char_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if not row:
+            raise InvalidArgument("Этого персонажа нет в коллекции")
+        row.affection = (row.affection or 0) + 1
+        session.commit()
+        return {
+            "char_id": char_id,
+            "affection": row.affection,
+            "bond": row.affection // AFFECTION_PER_BOND,
+            "line": _rng.choice(PET_LINES),
+        }
     finally:
         session.close()
 

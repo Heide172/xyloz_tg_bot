@@ -33,28 +33,29 @@ def _add(c: GachaChar) -> None:
     CATALOG[c.id] = c
 
 
-# ---- R: базовые работницы (переиспользуем farm-ассеты) ----
-_add(GachaChar("r_cherry", "Вишнёвая", "R", "worker", 0.2, "/farm/cherry_t1.png"))
-_add(GachaChar("r_lemon", "Лимонная", "R", "worker", 0.5, "/farm/lemon_t1.png"))
-_add(GachaChar("r_bell", "Колокольчик", "R", "worker", 1.0, "/farm/bell_t1.png"))
-_add(GachaChar("r_star", "Звёздная", "R", "worker", 2.0, "/farm/star_t1.png"))
-_add(GachaChar("r_diamond", "Бриллиантовая", "R", "worker", 4.0, "/farm/diamond_t1.png"))
+# ---- R: базовые работницы ----
+# arts: новые webp из дизайн-сборки (раньше переиспользовали farm-тайлы).
+_add(GachaChar("r_cherry", "Вишнёвая", "R", "worker", 0.2, "/gacha/r_cherry.webp"))
+_add(GachaChar("r_lemon", "Лимонная", "R", "worker", 0.5, "/gacha/r_lemon.webp"))
+_add(GachaChar("r_bell", "Колокольчик", "R", "worker", 1.0, "/gacha/r_bell.webp"))
+_add(GachaChar("r_star", "Звёздная", "R", "worker", 2.0, "/gacha/r_star.webp"))
+_add(GachaChar("r_diamond", "Бриллиантовая", "R", "worker", 4.0, "/gacha/r_diamond.webp"))
 
 # ---- SR: усиленные работницы ----
-_add(GachaChar("sr_harvest", "Жница", "SR", "worker", 8.0, "/gacha/sr_harvest.png"))
-_add(GachaChar("sr_herbalist", "Травница", "SR", "worker", 10.0, "/gacha/sr_herbalist.png"))
-_add(GachaChar("sr_beekeeper", "Пасечница", "SR", "worker", 13.0, "/gacha/sr_beekeeper.png"))
-_add(GachaChar("sr_autumn", "Осенняя", "SR", "worker", 16.0, "/gacha/sr_autumn.png"))
+_add(GachaChar("sr_harvest", "Жница", "SR", "worker", 8.0, "/gacha/sr_harvest.webp"))
+_add(GachaChar("sr_herbalist", "Травница", "SR", "worker", 10.0, "/gacha/sr_herbalist.webp"))
+_add(GachaChar("sr_beekeeper", "Пасечница", "SR", "worker", 13.0, "/gacha/sr_beekeeper.webp"))
+_add(GachaChar("sr_autumn", "Осенняя", "SR", "worker", 16.0, "/gacha/sr_autumn.webp"))
 
 # ---- SSR: сильные работницы + героиня ----
-_add(GachaChar("ssr_noble", "Дворянка полей", "SSR", "worker", 35.0, "/gacha/ssr_noble.png"))
-_add(GachaChar("ssr_orchard", "Принцесса садов", "SSR", "worker", 45.0, "/gacha/ssr_orchard.png"))
-_add(GachaChar("ssr_sun", "Солнечная богиня", "SSR", "heroine", 1.5, "/gacha/ssr_sun.png"))
+_add(GachaChar("ssr_noble", "Дворянка полей", "SSR", "worker", 35.0, "/gacha/ssr_noble.webp"))
+_add(GachaChar("ssr_orchard", "Принцесса садов", "SSR", "worker", 45.0, "/gacha/ssr_orchard.webp"))
+_add(GachaChar("ssr_sun", "Солнечная богиня", "SSR", "heroine", 1.5, "/gacha/ssr_sun.webp"))
 
 # ---- UR: легендарные героини (центр фермы) ----
-_add(GachaChar("ur_celestial", "Небесная жница", "UR", "heroine", 2.0, "/gacha/ur_celestial.png"))
-_add(GachaChar("ur_cosmic", "Космическая королева", "UR", "heroine", 2.5, "/gacha/ur_cosmic.png"))
-_add(GachaChar("ur_phoenix", "Дева-феникс", "UR", "heroine", 3.0, "/gacha/ur_phoenix.png"))
+_add(GachaChar("ur_celestial", "Небесная жница", "UR", "heroine", 2.0, "/gacha/ur_celestial.webp"))
+_add(GachaChar("ur_cosmic", "Космическая королева", "UR", "heroine", 2.5, "/gacha/ur_cosmic.webp"))
+_add(GachaChar("ur_phoenix", "Дева-феникс", "UR", "heroine", 3.0, "/gacha/ur_phoenix.webp"))
 
 # Базовая героиня по умолчанию (если ни одна не выбрана) — старая главная.
 DEFAULT_HEROINE_MULT = 1.0

@@ -1,0 +1,31 @@
+/* gacha pull/idle keyframes + scrollbar — extracted from design build */
+    .scrollY::-webkit-scrollbar{width:6px}
+    .scrollY::-webkit-scrollbar-track{background:transparent}
+    .scrollY::-webkit-scrollbar-thumb{background:#2a2e38;border-radius:3px}
+    @keyframes floatIdle{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+    @keyframes breathe{0%,100%{transform:scale(1)}50%{transform:scale(1.03)}}
+    @keyframes sway{0%,100%{transform:rotate(-1.1deg)}50%{transform:rotate(1.1deg)}}
+    @keyframes sparkleDrift{0%{transform:translateY(6px) scale(.4);opacity:0}25%{opacity:.95}100%{transform:translateY(-30px) scale(1);opacity:0}}
+    @keyframes ringSpin{to{transform:rotate(360deg)}}
+    @keyframes ringSpinRev{to{transform:rotate(-360deg)}}
+    @keyframes corePulse{0%,100%{transform:scale(.82);opacity:.85}50%{transform:scale(1.18);opacity:1}}
+    @keyframes summonIn{0%{transform:scale(.25);opacity:0}55%{opacity:1}100%{transform:scale(1);opacity:1}}
+    @keyframes glowPulse{0%,100%{opacity:.5}50%{opacity:1}}
+    @keyframes beamRise{0%{transform:scaleY(0);opacity:0}22%{opacity:1}100%{transform:scaleY(1);opacity:.95}}
+    @keyframes flashHit{0%{opacity:0}35%{opacity:.85}100%{opacity:0}}
+    @keyframes burstFlash{0%{transform:scale(.2);opacity:0}18%{opacity:1}100%{transform:scale(2.6);opacity:0}}
+    @keyframes rayOut{0%{transform:scaleX(0);opacity:0}28%{opacity:1}100%{transform:scaleX(1);opacity:0}}
+    @keyframes partOut{0%{transform:translate(0,0) scale(1);opacity:1}100%{transform:translate(var(--tx),var(--ty)) scale(.3);opacity:0}}
+    @keyframes partIn{0%{transform:translate(var(--fx),var(--fy)) scale(.4);opacity:0}35%{opacity:1}100%{transform:translate(0,0) scale(1);opacity:0}}
+    @keyframes cardRise{0%{transform:translateY(70px) scale(.6);opacity:0}62%{transform:translateY(-8px) scale(1.05)}100%{transform:translateY(0) scale(1);opacity:1}}
+    @keyframes nameRise{0%{transform:translateY(16px);opacity:0;letter-spacing:.45em}100%{transform:translateY(0);opacity:1;letter-spacing:.02em}}
+    @keyframes shineSweep{0%{transform:translateX(-130%) skewX(-18deg)}55%{transform:translateX(230%) skewX(-18deg)}100%{transform:translateX(230%) skewX(-18deg)}}
+    @keyframes rayWheel{to{transform:rotate(360deg)}}
+    @keyframes screenShake{0%,100%{transform:translate(0,0)}15%{transform:translate(-6px,3px)}30%{transform:translate(5px,-4px)}45%{transform:translate(-4px,-3px)}60%{transform:translate(4px,4px)}80%{transform:translate(-2px,2px)}}
+    @keyframes gridPop{0%{transform:scale(0) rotate(-10deg);opacity:0}68%{transform:scale(1.1) rotate(3deg)}100%{transform:scale(1) rotate(0);opacity:1}}
+    @keyframes heartUp{0%{transform:translate(0,0) scale(.3);opacity:0}18%{opacity:1}100%{transform:translate(var(--hx),-130px) scale(1.1);opacity:0}}
+    @keyframes vignette{0%{opacity:0}100%{opacity:1}}
+    @keyframes badgePop{0%{transform:scale(0)}68%{transform:scale(1.35)}100%{transform:scale(1)}}
+    @keyframes fadeUp{0%{opacity:0;transform:translateY(10px)}100%{opacity:1;transform:translateY(0)}}
+    @keyframes bubblePop{0%{transform:scale(.5) translateY(8px);opacity:0}60%{transform:scale(1.06)}100%{transform:scale(1) translateY(0);opacity:1}}
+  </style>

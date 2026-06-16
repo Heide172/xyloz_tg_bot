@@ -15,6 +15,8 @@ from services.gacha_service import (
     InsufficientFunds,
     InvalidArgument,
     collection_sync,
+    daily_sync,
+    pet_sync,
     roll_sync,
     set_banner,
     set_heroine_sync,
@@ -32,6 +34,10 @@ class RollReq(BaseModel):
 
 
 class HeroineReq(BaseModel):
+    char_id: str
+
+
+class PetReq(BaseModel):
     char_id: str
 
 
@@ -72,6 +78,28 @@ async def heroine(req: HeroineReq, auth: TgWebAppAuth = Depends(require_auth)) -
     user_id = ensure_db_user(auth)
     try:
         return await asyncio.to_thread(set_heroine_sync, user_id, chat_id, req.char_id)
+    except Exception as e:
+        raise _err(e)
+
+
+@router.post("/daily")
+async def daily(auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    """Забрать ежедневный бонус (раз в сутки)."""
+    chat_id = await require_chat_membership(auth)
+    user_id = ensure_db_user(auth)
+    try:
+        return await asyncio.to_thread(daily_sync, user_id, chat_id)
+    except Exception as e:
+        raise _err(e)
+
+
+@router.post("/pet")
+async def pet(req: PetReq, auth: TgWebAppAuth = Depends(require_auth)) -> dict:
+    """«Приласкать» персонажа: +привязанность, случайная фраза."""
+    chat_id = await require_chat_membership(auth)
+    user_id = ensure_db_user(auth)
+    try:
+        return await asyncio.to_thread(pet_sync, user_id, chat_id, req.char_id)
     except Exception as e:
         raise _err(e)
 

@@ -17,6 +17,7 @@ class GachaCollection(Base):
     stars = Column(Integer, nullable=False, default=1)
     copies = Column(Integer, nullable=False, default=1)
     obtained_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    affection = Column(Integer, nullable=False, default=0)  # «приласкать»: очки привязанности
 
     __table_args__ = (
         UniqueConstraint("user_id", "chat_id", "char_id", name="uq_gacha_user_chat_char"),

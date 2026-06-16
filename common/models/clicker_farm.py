@@ -34,6 +34,7 @@ class ClickerFarm(Base):
     gacha_rolls = Column(Integer, nullable=False, default=0)
     active_heroine = Column(String(40), nullable=True)      # char_id выбранной героини
     gacha_migrated = Column(Integer, nullable=False, default=0)  # 0/1 флаг конвертации workers
+    last_daily_at = Column(DateTime, nullable=True)         # последний забранный ежедневный бонус (UTC)
 
     last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
