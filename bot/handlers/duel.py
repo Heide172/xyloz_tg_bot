@@ -5,8 +5,12 @@
 DUEL_MUTE_MINUTES минут — может слать только стикеры.
 
 Опасная для баланса механика (форс + деньги), поэтому предчеки идут ДО
-списания: бот-админ с правом мутить, оба участника — обычные участники
-(админа не замутить), оппонент тянет ставку. Иначе — отказ без движения денег.
+списания: бот — админ с правом мутить, оба участника мутибельны, оппонент
+тянет ставку. Иначе — отказ без движения денег.
+
+Тег-админов (держателей custom_title из механики тегов) мутить можно:
+apply_duel_mute снимет тег + демоутит + restrict, а тег вернёт sweep
+(tag_service.restore_due_duel_tags). Реальных модераторов/владельца — нет.
 """
 import asyncio
 import time
@@ -22,7 +26,13 @@ from services.duel_service import (
     duel_chat_sync,
 )
 from services.markets_service import InsufficientFunds, InvalidArgument
-from services.mute_service import bot_can_restrict, member_status, mute_stickers_only
+from services.mute_service import (
+    apply_duel_mute,
+    bot_admin_rights,
+    is_tag_admin,
+    member_status,
+    mute_block_reason,
+)
 from services.user_card_service import resolve_user_for_card
 
 logger = get_logger(__name__)
@@ -31,6 +41,15 @@ router = Router()
 # Анти-спам: последний вызов на (chat_id, challenger_tg). In-memory —
 # потеря на рестарте не критична (кулдаун ~минута).
 _last_challenge: dict[tuple[int, int], float] = {}
+
+# Причина отказа (код из mute_block_reason) → текст для оппонента.
+_OPPONENT_BLOCK = {
+    "absent": "Этого игрока нет в чате.",
+    "bot": "Ботов на дуэль не вызывают.",
+    "owner": "Нельзя вызвать владельца чата — его не замутить.",
+    "real_admin": "Нельзя вызвать реального админа — его не трогаем.",
+    "muted": "Игрок уже в муте.",
+}
 
 
 def _parse_stake(args: list[str]) -> int:
@@ -87,7 +106,8 @@ async def cmd_duel(msg: types.Message):
         await msg.reply("Себя вызвать нельзя.")
         return
 
-    if not await bot_can_restrict(bot, chat_id):
+    bot_rights = await bot_admin_rights(bot, chat_id)
+    if bot_rights is None or not getattr(bot_rights, "can_restrict_members", False):
         await msg.reply(
             "Не могу мутить: сделайте бота админом с правом ограничивать участников."
         )
@@ -95,20 +115,24 @@ async def cmd_duel(msg: types.Message):
 
     ch_member = await member_status(bot, chat_id, challenger_tg)
     op_member = await member_status(bot, chat_id, opponent_tg)
-    if op_member is None or op_member.status in ("left", "kicked"):
-        await msg.reply("Этого игрока нет в чате.")
+
+    op_block = mute_block_reason(op_member)
+    if op_block:
+        await msg.reply(_OPPONENT_BLOCK[op_block])
         return
-    if op_member.user and op_member.user.is_bot:
-        await msg.reply("Ботов на дуэль не вызывают.")
+    ch_block = mute_block_reason(ch_member)
+    if ch_block in ("owner", "real_admin"):
+        await msg.reply("Ты сам админ или владелец — тебя не замутить, дуэль недоступна.")
         return
-    if ch_member and ch_member.status in ("creator", "administrator"):
-        await msg.reply("Ты админ — тебя не замутить, дуэль недоступна.")
+    if ch_block == "muted":
+        await msg.reply("Ты сейчас в муте.")
         return
-    if op_member.status in ("creator", "administrator"):
-        await msg.reply("Нельзя вызвать админа — его не замутить.")
-        return
-    if op_member.status == "restricted" and getattr(op_member, "can_send_messages", True) is False:
-        await msg.reply("Игрок уже в муте.")
+
+    # Демоут/возврат тега тег-админа требует права назначать администраторов.
+    if (is_tag_admin(op_member) or is_tag_admin(ch_member)) and not getattr(
+        bot_rights, "can_promote_members", False
+    ):
+        await msg.reply("Для мута тег-админа боту нужно право назначать администраторов.")
         return
 
     _last_challenge[key] = now
@@ -130,8 +154,10 @@ async def cmd_duel(msg: types.Message):
         await msg.reply("Дуэль сорвалась (ошибка). Попробуй позже.")
         return
 
-    ok, err = await mute_stickers_only(
-        bot, chat_id, result["loser_tg"], DUEL_MUTE_MINUTES
+    loser_tg = result["loser_tg"]
+    loser_member = ch_member if loser_tg == challenger_tg else op_member
+    ok, err = await apply_duel_mute(
+        bot, chat_id, loser_tg, DUEL_MUTE_MINUTES, loser_member
     )
 
     lines = [
@@ -139,9 +165,10 @@ async def cmd_duel(msg: types.Message):
         f"Победил {result['winner_name']} (+{result['prize']} гривен).",
     ]
     if ok:
+        tag_note = " (тег вернём после мута)" if is_tag_admin(loser_member) else ""
         lines.append(
             f"{result['loser_name']} улетает в мут на {DUEL_MUTE_MINUTES} мин — "
-            f"только стикеры. 🤐"
+            f"только стикеры.{tag_note} 🤐"
         )
     else:
         logger.warning(

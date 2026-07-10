@@ -269,3 +269,68 @@ async def expire_nomination_tags(bot: Bot) -> int:
             cleared, failed,
         )
     return cleared
+
+
+# ---------------- возврат тега после дуэль-мута ----------------
+
+
+def remember_duel_tag_restore(
+    chat_id: int, tg_id: int, until_epoch: int, title: str
+) -> None:
+    """Запомнить: тег-админа демоутнули на дуэль-мут, вернуть тег в
+    until_epoch (unix). Значение — 'until:title'; ключ переживает рестарт."""
+    _setting_set(f"duelmute:{chat_id}:{tg_id}", f"{until_epoch}:{title}")
+
+
+async def restore_due_duel_tags(bot: Bot) -> int:
+    """Вернуть теги тег-админам, чей дуэль-мут истёк (until <= now).
+
+    Само мут-ограничение снимает Telegram по until_date; тут только
+    восстанавливаем admin-статус и custom_title. Если у держателя активная
+    аренда — отдаём арендный тег (как expire_nomination_tags). При сбое
+    set_title ключ НЕ удаляем — повторим на следующем тике.
+    """
+    import time
+
+    from services.tag_rental_service import active_title_for_tg
+
+    now = int(time.time())
+    restored = 0
+    failed = 0
+    for key, value in _settings_with_prefix("duelmute:"):
+        parts = key.split(":")
+        if len(parts) != 3:
+            _setting_delete(key)
+            continue
+        try:
+            chat_id = int(parts[1])
+            tg_id = int(parts[2])
+        except ValueError:
+            _setting_delete(key)
+            continue
+        epoch_str, _, saved_title = value.partition(":")
+        try:
+            until = int(epoch_str)
+        except ValueError:
+            _setting_delete(key)
+            continue
+        if until > now:
+            continue  # мут ещё идёт
+
+        title = active_title_for_tg(chat_id, tg_id) or saved_title
+        if not title:
+            _setting_delete(key)  # тега не было — админом оставлять незачем
+            continue
+        ok, err = await set_title(bot, chat_id, tg_id, title)
+        if ok:
+            _setting_delete(key)
+            restored += 1
+        else:
+            failed += 1
+            logger.error(
+                "duel tag restore FAILED chat=%s tg=%s: %s (retry next tick)",
+                chat_id, tg_id, err,
+            )
+    if restored or failed:
+        logger.info("duel tag restore: ok=%d failed=%d", restored, failed)
+    return restored
