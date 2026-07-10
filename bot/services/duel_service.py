@@ -27,6 +27,11 @@ DUEL_MIN_STAKE = int(os.getenv("DUEL_MIN_STAKE", "10"))
 DUEL_MAX_STAKE = int(os.getenv("DUEL_MAX_STAKE", "100000"))
 DUEL_FEE_PCT = float(os.getenv("DUEL_FEE_PCT", "5"))
 
+# Чат-дуэль (bot/handlers/duel.py): форс-резолв + мут проигравшего.
+DUEL_MUTE_MINUTES = int(os.getenv("DUEL_MUTE_MINUTES", "15"))
+DUEL_DEFAULT_STAKE = int(os.getenv("DUEL_DEFAULT_STAKE", str(DUEL_MIN_STAKE)))
+DUEL_COOLDOWN_SEC = int(os.getenv("DUEL_COOLDOWN_SEC", "60"))
+
 _bot_username: str | None = None
 
 
@@ -262,6 +267,124 @@ def cancel_sync(duel_id: int, challenger_id: int) -> dict:
         r = _duel_dict(session, d)
         session.commit()
         return r
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def _get_or_create_user(
+    session, tg_id: int, username: str | None, fullname: str | None
+) -> User:
+    """Найти User по tg_id или создать (паттерн message_service.save_message)."""
+    u = session.query(User).filter(User.tg_id == tg_id).first()
+    if u:
+        return u
+    u = User(tg_id=tg_id, username=username, fullname=fullname)
+    session.add(u)
+    session.flush()
+    return u
+
+
+def duel_chat_sync(
+    chat_id: int,
+    challenger_tg: int,
+    challenger_username: str | None,
+    challenger_fullname: str | None,
+    opponent_id: int,
+    stake: int,
+) -> dict:
+    """Чат-дуэль: форс-резолв (без принятия). Эскроу с обоих, coinflip,
+    комиссия в банк, выплата победителю, строка в `duels`. Проигравшего
+    мутит уже handler (bot/handlers/duel.py) по возвращённому loser_tg.
+
+    Экономика идентична accept_sync — отличие лишь в том, что оба стейка
+    списываются разом (оппонент не «принимает»), и добавлена проверка,
+    что оппонент вообще тянет ставку (нельзя форсить в минус)."""
+    if not (DUEL_MIN_STAKE <= stake <= DUEL_MAX_STAKE):
+        raise InvalidArgument(f"Ставка {DUEL_MIN_STAKE}..{DUEL_MAX_STAKE}")
+    session = SessionLocal()
+    try:
+        challenger = _get_or_create_user(
+            session, challenger_tg, challenger_username, challenger_fullname
+        )
+        opponent = session.query(User).filter(User.id == opponent_id).first()
+        if not opponent:
+            raise InvalidArgument("Оппонент не найден")
+        if challenger.id == opponent.id:
+            raise InvalidArgument("Нельзя вызвать самого себя")
+
+        # Порядок блокировок стабилен (challenger → opponent) — меньше шансов
+        # на дедлок при параллельных дуэлях.
+        ch_bal = _get_or_create_balance(session, challenger.id, chat_id)
+        if ch_bal.balance < stake:
+            raise InsufficientFunds(f"Нужно {stake}, у тебя {ch_bal.balance}")
+        op_bal = _get_or_create_balance(session, opponent.id, chat_id)
+        if op_bal.balance < stake:
+            raise InsufficientFunds(
+                f"У {_name(opponent)} только {op_bal.balance} — ставка {stake} не по карману"
+            )
+
+        # эскроу обоих
+        ch_bal.balance -= stake
+        ch_bal.updated_at = datetime.utcnow()
+        op_bal.balance -= stake
+        op_bal.updated_at = datetime.utcnow()
+
+        d = Duel(
+            chat_id=chat_id,
+            challenger_id=challenger.id,
+            opponent_id=opponent.id,
+            stake=stake,
+            status="pending",
+        )
+        session.add(d)
+        session.flush()
+        _log_tx(session, challenger.id, chat_id, -stake,
+                kind="duel_stake_hold", ref_id=str(d.id))
+        _log_tx(session, opponent.id, chat_id, -stake,
+                kind="duel_stake_hold", ref_id=str(d.id))
+
+        pool = stake * 2
+        commission = max(1, math.ceil(pool * DUEL_FEE_PCT / 100.0))
+        prize = pool - commission
+        winner = _rng.choice([challenger, opponent])
+        loser = opponent if winner.id == challenger.id else challenger
+
+        win_bal = ch_bal if winner.id == challenger.id else op_bal
+        win_bal.balance += prize
+        win_bal.updated_at = datetime.utcnow()
+        bank = _get_or_create_bank(session, chat_id)
+        bank.balance += commission
+        bank.updated_at = datetime.utcnow()
+
+        _log_tx(session, winner.id, chat_id, prize,
+                kind="duel_win", ref_id=str(d.id),
+                note=f"чат-дуэль #{d.id}: выигрыш над {loser.id}")
+        _log_tx(session, None, chat_id, commission,
+                kind="duel_fee", ref_id=str(d.id))
+
+        d.status = "resolved"
+        d.winner_id = winner.id
+        d.commission = commission
+        d.resolved_at = datetime.utcnow()
+        session.flush()
+
+        result = {
+            "id": int(d.id),
+            "stake": stake,
+            "prize": prize,
+            "commission": commission,
+            "challenger_tg": int(challenger.tg_id),
+            "opponent_tg": int(opponent.tg_id),
+            "winner_tg": int(winner.tg_id),
+            "loser_tg": int(loser.tg_id),
+            "winner_name": _name(winner),
+            "loser_name": _name(loser),
+        }
+        session.commit()
+        return result
     except Exception:
         session.rollback()
         raise

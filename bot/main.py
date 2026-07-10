@@ -7,6 +7,7 @@ from handlers.ask import router as ask_router
 from handlers.casino import router as casino_router
 from handlers.media_dl import router as media_dl_router
 from handlers.digest import router as digest_router
+from handlers.duel import router as duel_router
 from handlers.farm_admin import router as farm_admin_router
 from handlers.feedback_admin import router as feedback_admin_router
 from handlers.joke import router as joke_router
@@ -44,6 +45,7 @@ PUBLIC_COMMANDS = [
     BotCommand(command="joke", description="Анекдот дня"),
     BotCommand(command="phrase", description="Фраза дня в стиле чата"),
     BotCommand(command="casino", description="Открыть Mini App: ставки, игры, рынки, баланс"),
+    BotCommand(command="duel", description="Вызвать игрока на дуэль (проигравший — в мут)"),
     BotCommand(command="rules", description="Правила Бурмалды: экономика и ставки"),
 ]
 
@@ -86,6 +88,7 @@ async def main():
     dp.include_router(feedback_admin_router)
     dp.include_router(farm_admin_router)
     dp.include_router(payments_router)  # ДО message_router (catch-all)
+    dp.include_router(duel_router)  # /duel — ДО message_router (catch-all)
     dp.include_router(twin_admin_router)  # команды /twin_*
     dp.message.outer_middleware(TwinMiddleware())  # fire-and-forget twin reply
     dp.include_router(message_router)
