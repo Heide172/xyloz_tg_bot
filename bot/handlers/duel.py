@@ -25,6 +25,7 @@ from services.duel_service import (
     DUEL_COOLDOWN_SEC,
     DUEL_DEFAULT_STAKE,
     DUEL_MUTE_MINUTES,
+    DUEL_RING_COOLDOWN_MIN,
     duel_chat_sync,
 )
 from services.markets_service import InsufficientFunds, InvalidArgument
@@ -44,6 +45,17 @@ router = Router()
 # Анти-спам: последний вызов на (chat_id, challenger_tg). In-memory —
 # потеря на рестарте не критична (кулдаун ~минута).
 _last_challenge: dict[tuple[int, int], float] = {}
+
+# «Отмывание ринга»: chat_id -> monotonic-время, когда ринг снова чистый.
+# Глобальный кулдаун на весь чат после состоявшегося боя. In-memory —
+# рестарт очищает ринг досрочно, для геймплейного кулдауна это ок.
+_ring_clean_at: dict[int, float] = {}
+
+
+def _fmt_left(seconds: float) -> str:
+    if seconds >= 60:
+        return f"{int(seconds // 60) + 1} мин"
+    return f"{int(seconds)} c"
 
 # Право бота, нужное под каждую стратегию мута (человекочитаемо для отказа).
 _RIGHT_FOR_STRATEGY = {
@@ -95,6 +107,16 @@ async def cmd_duel(msg: types.Message):
     challenger_tg = msg.from_user.id
 
     now = time.monotonic()
+
+    # Глобальный кулдаун чата: ринг ещё отмывают от прошлого боя.
+    clean_at = _ring_clean_at.get(chat_id)
+    if clean_at is not None and now < clean_at:
+        await msg.reply(
+            "🧹 Ринг ещё отмывают от крови прошлой дуэли — "
+            f"приходи через {_fmt_left(clean_at - now)}."
+        )
+        return
+
     key = (chat_id, challenger_tg)
     last = _last_challenge.get(key)
     if last is not None and now - last < DUEL_COOLDOWN_SEC:
@@ -182,6 +204,9 @@ async def cmd_duel(msg: types.Message):
         await msg.reply("Дуэль сорвалась (ошибка). Попробуй позже.")
         return
 
+    # Бой состоялся — ринг «в крови», отмываем DUEL_RING_COOLDOWN_MIN минут.
+    _ring_clean_at[chat_id] = now + DUEL_RING_COOLDOWN_MIN * 60
+
     loser_tg = result["loser_tg"]
     loser_member = ch_member if loser_tg == challenger_tg else op_member
     ok, err = await apply_duel_mute(
@@ -207,4 +232,5 @@ async def cmd_duel(msg: types.Message):
             f"{result['loser_name']} должен был в мут, но замутить не вышло — "
             f"проверьте права бота. Деньги уже переведены."
         )
+    lines.append(f"🧹 Ринг закрыт на отмывание — {DUEL_RING_COOLDOWN_MIN} мин без дуэлей.")
     await msg.answer("\n".join(lines))

@@ -31,6 +31,8 @@ DUEL_FEE_PCT = float(os.getenv("DUEL_FEE_PCT", "5"))
 DUEL_MUTE_MINUTES = int(os.getenv("DUEL_MUTE_MINUTES", "15"))
 DUEL_DEFAULT_STAKE = int(os.getenv("DUEL_DEFAULT_STAKE", str(DUEL_MIN_STAKE)))
 DUEL_COOLDOWN_SEC = int(os.getenv("DUEL_COOLDOWN_SEC", "60"))
+# «Отмывание ринга»: глобальный (на весь чат) кулдаун после боя.
+DUEL_RING_COOLDOWN_MIN = int(os.getenv("DUEL_RING_COOLDOWN_MIN", "15"))
 
 _bot_username: str | None = None
 
