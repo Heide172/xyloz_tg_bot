@@ -43,6 +43,35 @@ _ADMIN_RIGHT_FIELDS = (
     "can_manage_topics",
 )
 
+# Настоящие модер-права. can_manage_chat СЮДА НЕ входит: Telegram репортит его
+# True и у чисто-тег-админов (зонтичное право), включение ломало бы детекцию.
+# can_invite_users тоже нет — его выдаёт механика тегов.
+_REAL_ADMIN_POWERS = (
+    "can_delete_messages",
+    "can_restrict_members",
+    "can_promote_members",
+    "can_change_info",
+    "can_pin_messages",
+    "can_post_messages",
+    "can_edit_messages",
+    "can_manage_topics",
+    "can_manage_video_chats",
+    "can_post_stories",
+    "can_edit_stories",
+    "can_delete_stories",
+)
+
+
+def is_tag_admin(member: ChatMember | None) -> bool:
+    """Админ, назначенный ботом только ради тега: can_be_edited и без
+    настоящих модер-прав. Отличает тег-холдера от реального модератора."""
+    if member is None or member.status != "administrator":
+        return False
+    if not getattr(member, "can_be_edited", False):
+        return False
+    return not any(getattr(member, p, False) for p in _REAL_ADMIN_POWERS)
+
+
 # Софт-мут: (chat_id, tg_id) -> unix-время окончания. In-memory — на рестарте
 # теряется (мут снимается раньше), для 15-минутного наказания это приемлемо
 # и не бьёт по хот-пути middleware (без БД на каждое сообщение).
