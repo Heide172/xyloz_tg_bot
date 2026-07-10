@@ -87,6 +87,14 @@ def _tg(method: str, params: dict) -> tuple[bool, str | None]:
 
 
 def _set_tg_title(chat_id: int, tg_user_id: int, title: str) -> tuple[bool, str | None]:
+    # В дуэль-муте тег не вешаем (promote снял бы мут) — кладём в очередь,
+    # повесит process_expired_duel_mutes после мута.
+    from services import duel_mute_registry as reg
+
+    if reg.is_muted_now(chat_id, tg_user_id):
+        reg.queue_tag(chat_id, tg_user_id, title[:TITLE_MAX])
+        logger.info("rental tag queued behind duel-mute chat=%s tg=%s", chat_id, tg_user_id)
+        return True, None
     ok, err = _tg("promoteChatMember", {
         "chat_id": chat_id, "user_id": tg_user_id, "can_invite_users": "true"
     })

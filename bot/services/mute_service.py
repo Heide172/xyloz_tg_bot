@@ -4,10 +4,13 @@
   снимает сам).
 - hard_admin — админ, которого бот может разжаловать (can_be_edited): снимаем
   ВСЕ права + тег, мутим, а права/тег возвращаем полностью через
-  tag_service.restore_due_duel_admins (sweep в scheduler).
+  tag_service.process_expired_duel_mutes (sweep в scheduler).
 - soft    — админ, которого разжаловать нельзя (владелец / назначенный не
   ботом): нативно не замутить, поэтому бот 15 минут удаляет его не-стикерные
   сообщения (DuelMuteMiddleware в handlers/duel.py читает is_soft_muted).
+
+Каждый мут пишется в duel_mute_registry — по нему выдача тега во время мута
+уходит в очередь (не снимает мут), а по истечении тег вешается.
 """
 import time
 from datetime import timedelta
@@ -86,8 +89,11 @@ def is_already_muted(chat_id: int, member: ChatMember | None) -> bool:
     if member is None:
         return False
     tg = member.user.id if member.user else None
-    if tg is not None and is_soft_muted(chat_id, tg):
-        return True
+    if tg is not None:
+        from services import duel_mute_registry as reg
+
+        if is_soft_muted(chat_id, tg) or reg.is_muted_now(chat_id, tg):
+            return True
     return member.status == "restricted" and getattr(member, "can_send_messages", True) is False
 
 
@@ -133,36 +139,41 @@ async def _restrict(bot: Bot, chat_id: int, tg_id: int, minutes: int) -> tuple[b
 async def apply_duel_mute(
     bot: Bot, chat_id: int, tg_id: int, minutes: int, member: ChatMember | None
 ) -> tuple[bool, str | None]:
-    """Замутить проигравшего на `minutes` минут (только стикеры) по стратегии."""
+    """Замутить проигравшего на `minutes` минут (только стикеры) по стратегии.
+
+    Каждый мут пишется в duel_mute_registry — по нему выдача тегов уходит в
+    очередь (тег не снимает мут), а по истечении применяется отложенный тег /
+    возвращаются права (tag_service.process_expired_duel_mutes)."""
+    from services import duel_mute_registry as reg
+
+    until = int(time.time()) + minutes * 60
     strat = mute_strategy(member)
     if strat == "soft":
         soft_mute(chat_id, tg_id, minutes)
+        reg.set_mute(chat_id, tg_id, until, "soft")
         return True, None
     if strat == "hard_admin":
-        from services.tag_service import (
-            clear_title,
-            forget_duel_admin_restore,
-            remember_duel_admin_restore,
-            restore_admin_now,
-        )
+        from services.tag_service import clear_title, restore_admin_now
 
         title = (getattr(member, "custom_title", None) or "").strip()
         rights = capture_admin_rights(member)
         ok, err = await clear_title(bot, chat_id, tg_id)  # демоут + снять title
         if not ok:
             return False, f"демоут не удался: {err}"
-        # Ключ возврата пишем ДО restrict: если процесс упадёт между демоутом и
-        # restrict, sweep всё равно вернёт права (человек не застрянет разжалованным).
-        until = int(time.time()) + minutes * 60
-        remember_duel_admin_restore(chat_id, tg_id, until, title, rights)
+        # Запись мута ДО restrict: если процесс упадёт между демоутом и restrict,
+        # sweep всё равно вернёт права (человек не застрянет разжалованным).
+        reg.set_mute(chat_id, tg_id, until, "hard_admin", title=title, rights=rights)
         ok, err = await _restrict(bot, chat_id, tg_id, minutes)
         if not ok:
-            forget_duel_admin_restore(chat_id, tg_id)
+            reg.clear_mute(chat_id, tg_id)
             await restore_admin_now(bot, chat_id, tg_id, rights, title)
             return False, err
         return True, None
     # native (обычный участник)
-    return await _restrict(bot, chat_id, tg_id, minutes)
+    ok, err = await _restrict(bot, chat_id, tg_id, minutes)
+    if ok:
+        reg.set_mute(chat_id, tg_id, until, "native")
+    return ok, err
 
 
 async def member_status(bot: Bot, chat_id: int, tg_id: int) -> ChatMember | None:

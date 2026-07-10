@@ -7,7 +7,6 @@ Telegram ставит custom_title только админам и максиму
 Используется для авто-тега номинантам (пидор дня и т.п.) и рынка
 аренды тегов.
 """
-import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -101,10 +100,19 @@ def _settings_with_prefix(prefix: str) -> list[tuple[str, str]]:
 async def set_title(
     bot: Bot, chat_id: int, tg_user_id: int, title: str
 ) -> tuple[bool, str | None]:
-    """Назначить custom_title. Возвращает (ok, error_text)."""
+    """Назначить custom_title. Возвращает (ok, error_text).
+
+    Если человек сейчас в дуэль-муте — тег НЕ вешаем (promote снял бы мут),
+    а кладём в очередь; повесит process_expired_duel_mutes после мута."""
     title = (title or "").strip()[:TITLE_MAX]
     if not title:
         return False, "пустой title"
+    from services import duel_mute_registry as reg
+
+    if reg.is_muted_now(chat_id, tg_user_id):
+        reg.queue_tag(chat_id, tg_user_id, title)
+        logger.info("tag queued behind duel-mute chat=%s tg=%s", chat_id, tg_user_id)
+        return True, None
     try:
         await bot.promote_chat_member(
             chat_id=chat_id,
@@ -272,21 +280,7 @@ async def expire_nomination_tags(bot: Bot) -> int:
     return cleared
 
 
-# ---------------- возврат прав/тега после дуэль-мута ----------------
-
-
-def remember_duel_admin_restore(
-    chat_id: int, tg_id: int, until_epoch: int, title: str, rights: dict
-) -> None:
-    """Запомнить: админа разжаловали на дуэль-мут — вернуть его права+тег в
-    until_epoch (unix). Значение — JSON {until,title,rights}; переживает рестарт."""
-    payload = json.dumps({"until": until_epoch, "title": title, "rights": rights})
-    _setting_set(f"duelmute:{chat_id}:{tg_id}", payload)
-
-
-def forget_duel_admin_restore(chat_id: int, tg_id: int) -> None:
-    """Убрать запись о возврате прав (мут не встал / уже вернули)."""
-    _setting_delete(f"duelmute:{chat_id}:{tg_id}")
+# ---------------- истечение дуэль-мута: возврат прав + отложенный тег --------
 
 
 async def restore_admin_now(
@@ -306,68 +300,49 @@ async def restore_admin_now(
         return False, msg
 
 
-def _parse_duelmute(value: str) -> tuple[int | None, str, dict]:
-    """(until, title, rights) из JSON или старого формата 'until:title'."""
-    try:
-        d = json.loads(value)
-        return int(d["until"]), d.get("title") or "", d.get("rights") or {}
-    except (ValueError, KeyError, TypeError):
-        epoch_str, _, title = value.partition(":")
-        try:
-            return int(epoch_str), title, {"can_invite_users": True}
-        except ValueError:
-            return None, "", {}
-
-
-async def restore_due_duel_admins(bot: Bot) -> int:
-    """Вернуть права/теги тем, чей дуэль-мут истёк (until <= now).
-
-    Само мут-ограничение снимает Telegram по until_date; тут возвращаем
-    admin-статус, права и custom_title. Тег-админам с активной арендой
-    отдаём арендный тег (как expire_nomination_tags). При сбое ключ НЕ
-    удаляем — повторим на следующем тике.
+async def process_expired_duel_mutes(bot: Bot) -> int:
+    """Для тех, чей дуэль-мут истёк (until <= now): само ограничение снял
+    Telegram по until_date; тут возвращаем права тег-админам и вешаем тег,
+    отложенный в очередь во время мута (аренда/номинация). Приоритет титула:
+    очередь > активная аренда > старый. При сбое запись НЕ чистим — повторим.
     """
     import time
 
+    from services import duel_mute_registry as reg
     from services.tag_rental_service import active_title_for_tg
 
     now = int(time.time())
-    restored = 0
+    done = 0
     failed = 0
-    for key, value in _settings_with_prefix("duelmute:"):
-        parts = key.split(":")
-        if len(parts) != 3:
-            _setting_delete(key)
-            continue
-        try:
-            chat_id = int(parts[1])
-            tg_id = int(parts[2])
-        except ValueError:
-            _setting_delete(key)
-            continue
-        until, saved_title, rights = _parse_duelmute(value)
-        if until is None:
-            _setting_delete(key)
-            continue
-        if until > now:
+    for chat_id, tg_id, mute in reg.iter_mutes():
+        if mute["until"] > now:
             continue  # мут ещё идёт
 
-        title = active_title_for_tg(chat_id, tg_id) or saved_title
-        if not rights and not title:
-            _setting_delete(key)  # нечего возвращать
-            continue
-        if not rights and title:
-            rights = {"can_invite_users": True}  # минимальный админ, чтобы держать тег
-        ok, err = await restore_admin_now(bot, chat_id, tg_id, rights, title)
+        pending = reg.pending_tag(chat_id, tg_id)
+        rights = mute.get("rights") or {}
+        try:
+            if mute.get("kind") == "hard_admin" and rights:
+                # вернуть полные права; титул — очередь > аренда > сохранённый
+                title = pending or active_title_for_tg(chat_id, tg_id) or mute.get("title") or ""
+                ok, err = await restore_admin_now(bot, chat_id, tg_id, rights, title)
+            elif pending:
+                # обычному участнику тег клали в очередь во время мута — вешаем
+                ok, err = await set_title(bot, chat_id, tg_id, pending)
+            else:
+                ok, err = True, None  # native без тега — Telegram уже всё снял
+        except Exception as exc:
+            ok, err = False, str(exc)
+
         if ok:
-            _setting_delete(key)
-            restored += 1
+            reg.clear_mute(chat_id, tg_id)
+            reg.clear_pending_tag(chat_id, tg_id)
+            done += 1
         else:
             failed += 1
             logger.error(
-                "duel admin restore FAILED chat=%s tg=%s: %s (retry next tick)",
+                "duel mute expiry apply FAILED chat=%s tg=%s: %s (retry next tick)",
                 chat_id, tg_id, err,
             )
-    if restored or failed:
-        logger.info("duel admin restore: ok=%d failed=%d", restored, failed)
-    return restored
+    if done or failed:
+        logger.info("duel mute expiry: ok=%d failed=%d", done, failed)
+    return done
