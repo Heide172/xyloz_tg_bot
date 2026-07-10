@@ -46,6 +46,7 @@ PUBLIC_COMMANDS = [
     BotCommand(command="phrase", description="Фраза дня в стиле чата"),
     BotCommand(command="casino", description="Открыть Mini App: ставки, игры, рынки, баланс"),
     BotCommand(command="duel", description="Вызвать игрока на дуэль (проигравший — в мут)"),
+    BotCommand(command="duelbot", description="Босс-файт с ботом: рискни и лутай банк чата"),
     BotCommand(command="rules", description="Правила Бурмалды: экономика и ставки"),
 ]
 

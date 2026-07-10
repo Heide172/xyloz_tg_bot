@@ -37,6 +37,12 @@ DUEL_RING_COOLDOWN_MIN = int(os.getenv("DUEL_RING_COOLDOWN_MIN", "15"))
 # 1× (или сколько есть). Балансирует отсутствие подтверждения.
 DUEL_CHALLENGER_MULT = int(os.getenv("DUEL_CHALLENGER_MULT", "2"))
 
+# Босс-файт с ботом (/duelbot): дорогой вход, низкий шанс, приз — лут банка.
+DUELBOT_MIN_STAKE = int(os.getenv("DUELBOT_MIN_STAKE", "10000"))
+DUELBOT_WIN_PCT = int(os.getenv("DUELBOT_WIN_PCT", "25"))      # шанс игрока
+DUELBOT_LOOT_MULT = int(os.getenv("DUELBOT_LOOT_MULT", "3"))   # лут = min(ставка×N, банк)
+DUELBOT_COOLDOWN_MIN = int(os.getenv("DUELBOT_COOLDOWN_MIN", "60"))
+
 _bot_username: str | None = None
 
 
@@ -396,6 +402,86 @@ def duel_chat_sync(
             "opponent_name": _name(opponent),
             "winner_name": _name(winner),
             "loser_name": _name(loser),
+        }
+        session.commit()
+        return result
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+def duelbot_sync(
+    chat_id: int,
+    challenger_tg: int,
+    challenger_username: str | None,
+    challenger_fullname: str | None,
+    stake: int,
+) -> dict:
+    """Босс-файт с ботом. Шанс победы DUELBOT_WIN_PCT%. Победа → лут
+    min(ставка×DUELBOT_LOOT_MULT, банк) из банка (ставка не рискуется).
+    Проигрыш → ставка уходит в банк (мут игрока вешает handler). Без escrow:
+    резолв мгновенный, поэтому просто двигаем баланс по исходу."""
+    if stake < DUELBOT_MIN_STAKE:
+        raise InvalidArgument(f"Против бота ставка от {DUELBOT_MIN_STAKE}")
+    if stake > DUEL_MAX_STAKE:
+        raise InvalidArgument(f"Максимум {DUEL_MAX_STAKE}")
+    session = SessionLocal()
+    try:
+        challenger = _get_or_create_user(
+            session, challenger_tg, challenger_username, challenger_fullname
+        )
+        bal = _get_or_create_balance(session, challenger.id, chat_id)
+        if bal.balance < stake:
+            raise InsufficientFunds(f"Нужно {stake}, у тебя {bal.balance}")
+        bank = _get_or_create_bank(session, chat_id)
+
+        d = Duel(
+            chat_id=chat_id,
+            challenger_id=challenger.id,
+            opponent_id=None,  # оппонент — бот
+            stake=stake,
+            status="pending",
+        )
+        session.add(d)
+        session.flush()
+
+        win = _rng.random() * 100 < DUELBOT_WIN_PCT
+        if win:
+            loot = min(stake * DUELBOT_LOOT_MULT, max(0, bank.balance))
+            bal.balance += loot
+            bal.updated_at = datetime.utcnow()
+            bank.balance -= loot
+            bank.updated_at = datetime.utcnow()
+            _log_tx(session, challenger.id, chat_id, loot,
+                    kind="duelbot_loot", ref_id=str(d.id), note="лут банка с бота")
+            _log_tx(session, None, chat_id, -loot,
+                    kind="duelbot_bank_pay", ref_id=str(d.id))
+            d.winner_id = challenger.id
+        else:
+            loot = 0
+            bal.balance -= stake
+            bal.updated_at = datetime.utcnow()
+            bank.balance += stake
+            bank.updated_at = datetime.utcnow()
+            _log_tx(session, challenger.id, chat_id, -stake,
+                    kind="duelbot_loss", ref_id=str(d.id))
+            _log_tx(session, None, chat_id, stake,
+                    kind="duelbot_bank_gain", ref_id=str(d.id))
+            d.winner_id = None
+
+        d.status = "resolved"
+        d.resolved_at = datetime.utcnow()
+        session.flush()
+        result = {
+            "id": int(d.id),
+            "win": win,
+            "stake": stake,
+            "loot": loot,
+            "challenger_tg": int(challenger.tg_id),
+            "challenger_name": _name(challenger),
+            "bank_after": int(bank.balance),
         }
         session.commit()
         return result

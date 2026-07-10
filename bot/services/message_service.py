@@ -3,7 +3,8 @@ from common.models.message import Message
 from common.models.user import User
 from common.models.reaction import Reaction
 from common.logger.logger import get_logger
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import func
 import emoji
 
 
@@ -86,5 +87,27 @@ def save_reaction(event):
     except Exception as e:
         session.rollback()
         logger.error(f"DB ERROR: {e}", exc_info=True)
+    finally:
+        session.close()
+
+
+def random_recent_sticker(chat_id: int, days: int = 7) -> str | None:
+    """Случайный sticker file_id из отправленных в чате за последние `days`
+    дней. None, если стикеров нет. Для «мута бота» (/duelbot): бот отвечает
+    рандомным недавним стикером вместо болтовни."""
+    session = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        row = (
+            session.query(Message.sticker)
+            .filter(
+                Message.chat_id == chat_id,
+                Message.sticker.isnot(None),
+                Message.created_at >= cutoff,
+            )
+            .order_by(func.random())
+            .first()
+        )
+        return row[0] if row else None
     finally:
         session.close()

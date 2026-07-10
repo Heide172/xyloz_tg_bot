@@ -28,8 +28,12 @@ from services.duel_service import (
     DUEL_DEFAULT_STAKE,
     DUEL_MUTE_MINUTES,
     DUEL_RING_COOLDOWN_MIN,
+    DUELBOT_COOLDOWN_MIN,
+    DUELBOT_MIN_STAKE,
     duel_chat_sync,
+    duelbot_sync,
 )
+from services import duel_mute_registry as _reg
 from services.admin_service import is_admin_tg_id
 from services.markets_service import InsufficientFunds, InvalidArgument
 from services.mute_service import (
@@ -55,6 +59,9 @@ _last_challenge: dict[tuple[int, int], float] = {}
 # Глобальный кулдаун на весь чат после состоявшегося боя. In-memory —
 # рестарт очищает ринг досрочно, для геймплейного кулдауна это ок.
 _ring_clean_at: dict[int, float] = {}
+
+# Отдельный кулдаун босс-файта с ботом (chat_id -> monotonic).
+_duelbot_ready_at: dict[int, float] = {}
 
 
 def _fmt_left(seconds: float) -> str:
@@ -368,3 +375,93 @@ async def cmd_unmute(msg: types.Message):
         await msg.reply(f"{_display_name(target)} и так не в муте.")
     else:
         await msg.reply(f"Не вышло: {err}")
+
+
+# ---------------- босс-файт с ботом: /duelbot ----------------
+
+
+def _parse_bot_stake(args: list[str]) -> int:
+    for tok in args:
+        if tok.isdigit():
+            return int(tok)
+    return DUELBOT_MIN_STAKE
+
+
+@router.message(Command("duelbot", "дуэльбот", ignore_case=True))
+async def cmd_duelbot(msg: types.Message):
+    if msg.chat.type not in ("group", "supergroup"):
+        await msg.reply("Только в групповом чате.")
+        return
+    if not msg.from_user:
+        return
+
+    bot = msg.bot
+    chat_id = msg.chat.id
+    challenger_tg = msg.from_user.id
+
+    now = time.monotonic()
+    ready = _duelbot_ready_at.get(chat_id)
+    if ready is not None and now < ready:
+        await msg.reply(
+            f"🤖 Бот ещё зализывает раны после прошлого боя — вызов через {_fmt_left(ready - now)}."
+        )
+        return
+
+    stake = _parse_bot_stake((msg.text or "").split()[1:])
+
+    # Проигравшего игрока надо будет замутить → нужны права под его стратегию.
+    bot_rights = await bot_admin_rights(bot, chat_id)
+    if bot_rights is None:
+        await msg.reply("Бот должен быть админом чата.")
+        return
+    ch_member = await member_status(bot, chat_id, challenger_tg)
+    if is_already_muted(chat_id, ch_member):
+        await msg.reply("Ты сейчас в муте.")
+        return
+    strat = mute_strategy(ch_member)
+    right = _RIGHT_FOR_STRATEGY.get(strat)
+    if right and not getattr(bot_rights, right[0], False):
+        await msg.reply(f"Не могу: боту нужно право «{right[1]}» (замутить при проигрыше).")
+        return
+
+    try:
+        result = await asyncio.to_thread(
+            duelbot_sync,
+            chat_id,
+            challenger_tg,
+            msg.from_user.username,
+            msg.from_user.full_name,
+            stake,
+        )
+    except (InsufficientFunds, InvalidArgument) as exc:
+        await msg.reply(str(exc))
+        return
+    except Exception:
+        logger.exception("duelbot_sync failed chat=%s", chat_id)
+        await msg.reply("Бой с ботом сорвался (ошибка). Попробуй позже.")
+        return
+
+    _duelbot_ready_at[chat_id] = now + DUELBOT_COOLDOWN_MIN * 60
+
+    if result["win"]:
+        until = int(time.time()) + DUEL_MUTE_MINUTES * 60
+        _reg.set_bot_mute(chat_id, until)
+        lines = [
+            f"🤖💥 {result['challenger_name']} пробил бота!",
+            f"Лут из банка: +{result['loot']} гривен (в банке осталось {result['bank_after']}).",
+            f"Бот в муте на {DUEL_MUTE_MINUTES} мин — теперь болтает только стикерами. 🤐",
+        ]
+    else:
+        ok, err = await apply_duel_mute(bot, chat_id, challenger_tg, DUEL_MUTE_MINUTES, ch_member)
+        lines = [
+            f"🤖 Бот отбился от {result['challenger_name']}.",
+            f"Ставка {result['stake']} уходит в банк чата (теперь {result['bank_after']}).",
+        ]
+        if ok:
+            lines.append(
+                f"{result['challenger_name']} улетает в мут на {DUEL_MUTE_MINUTES} мин — только стикеры. 🤐"
+            )
+        else:
+            logger.warning("duelbot: mute failed loser=%s: %s", challenger_tg, err)
+            lines.append("(замутить не вышло — проверьте права бота.)")
+    await msg.answer("\n".join(lines))

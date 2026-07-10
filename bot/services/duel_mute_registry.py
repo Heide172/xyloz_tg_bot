@@ -20,6 +20,7 @@ logger = get_logger(__name__)
 
 _MUTE = "duelmute:"
 _PENDING = "pendingtag:"
+_BOTMUTE = "botmute:"
 
 
 def _ensure_table() -> None:
@@ -154,6 +155,26 @@ def iter_mutes() -> list[tuple[int, int, dict]]:
             continue
         out.append((chat_id, tg_id, mute))
     return out
+
+
+# ---------------- очередь тегов ----------------
+
+
+# ---------------- мут самого бота (после проигрыша игроку в /duelbot) ---------
+
+
+def set_bot_mute(chat_id: int, until_epoch: int) -> None:
+    _set(f"{_BOTMUTE}{chat_id}", str(int(until_epoch)))
+
+
+def is_bot_muted(chat_id: int) -> bool:
+    raw = _get(f"{_BOTMUTE}{chat_id}")
+    if not raw:
+        return False
+    try:
+        return int(raw) > int(time.time())
+    except ValueError:
+        return False
 
 
 # ---------------- очередь тегов ----------------
