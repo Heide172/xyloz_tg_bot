@@ -6,7 +6,9 @@ DUEL_MUTE_MINUTES минут — может слать только стикер
 
 Опасная для баланса механика (форс + деньги), поэтому предчеки идут ДО
 списания: у бота есть права под нужную стратегию мута обоих участников,
-оппонент тянет ставку, никто ещё не в муте. Иначе — отказ без движения денег.
+атакующий тянет свою ×N-ставку, никто ещё не в муте. Иначе — отказ без
+движения денег. Оппонент платёжеспособным быть НЕ обязан — безденежного тоже
+можно вызвать (ставит сколько есть), он рискует мутом (см. duel_chat_sync).
 
 Мутибельны все, кроме отсутствующих и ботов. Стратегия зависит от типа
 проигравшего (mute_service.mute_strategy): обычный участник — нативный
@@ -214,9 +216,12 @@ async def cmd_duel(msg: types.Message):
     )
 
     lines = [
-        f"🪙 Дуэль на {result['stake']}!",
-        f"Победил {result['winner_name']} (+{result['prize']} гривен).",
+        f"🪙 Дуэль! {result['challenger_name']} ставит {result['challenger_stake']} "
+        f"против {result['opponent_stake']} у {result['opponent_name']}.",
     ]
+    if result["opponent_stake"] == 0:
+        lines.append(f"💸 У {result['opponent_name']} пусто — на кону только его мут.")
+    lines.append(f"Победил {result['winner_name']} (+{result['prize']} гривен).")
     if ok:
         note = " (права вернём после мута)" if mute_strategy(loser_member) == "hard_admin" else ""
         lines.append(

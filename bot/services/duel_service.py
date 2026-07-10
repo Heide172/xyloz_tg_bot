@@ -33,6 +33,9 @@ DUEL_DEFAULT_STAKE = int(os.getenv("DUEL_DEFAULT_STAKE", str(DUEL_MIN_STAKE)))
 DUEL_COOLDOWN_SEC = int(os.getenv("DUEL_COOLDOWN_SEC", "60"))
 # «Отмывание ринга»: глобальный (на весь чат) кулдаун после боя.
 DUEL_RING_COOLDOWN_MIN = int(os.getenv("DUEL_RING_COOLDOWN_MIN", "15"))
+# Форс без согласия платный: атакующий ставит ×N от базовой ставки, оппонент —
+# 1× (или сколько есть). Балансирует отсутствие подтверждения.
+DUEL_CHALLENGER_MULT = int(os.getenv("DUEL_CHALLENGER_MULT", "2"))
 
 _bot_username: str | None = None
 
@@ -301,9 +304,10 @@ def duel_chat_sync(
     комиссия в банк, выплата победителю, строка в `duels`. Проигравшего
     мутит уже handler (bot/handlers/duel.py) по возвращённому loser_tg.
 
-    Экономика идентична accept_sync — отличие лишь в том, что оба стейка
-    списываются разом (оппонент не «принимает»), и добавлена проверка,
-    что оппонент вообще тянет ставку (нельзя форсить в минус)."""
+    Форс без согласия платный: атакующий ставит stake×DUEL_CHALLENGER_MULT,
+    оппонент — min(stake, его баланс). Безденежного оппонента вызвать можно
+    (ставит сколько есть, хоть 0) — он всё равно рискует мутом. Платёжеспособ-
+    ность проверяем только у атакующего (он сам решил бетать)."""
     if not (DUEL_MIN_STAKE <= stake <= DUEL_MAX_STAKE):
         raise InvalidArgument(f"Ставка {DUEL_MIN_STAKE}..{DUEL_MAX_STAKE}")
     session = SessionLocal()
@@ -317,21 +321,24 @@ def duel_chat_sync(
         if challenger.id == opponent.id:
             raise InvalidArgument("Нельзя вызвать самого себя")
 
+        challenger_stake = stake * DUEL_CHALLENGER_MULT
+
         # Порядок блокировок стабилен (challenger → opponent) — меньше шансов
         # на дедлок при параллельных дуэлях.
         ch_bal = _get_or_create_balance(session, challenger.id, chat_id)
-        if ch_bal.balance < stake:
-            raise InsufficientFunds(f"Нужно {stake}, у тебя {ch_bal.balance}")
-        op_bal = _get_or_create_balance(session, opponent.id, chat_id)
-        if op_bal.balance < stake:
+        if ch_bal.balance < challenger_stake:
             raise InsufficientFunds(
-                f"У {_name(opponent)} только {op_bal.balance} — ставка {stake} не по карману"
+                f"Форс стоит {challenger_stake} (×{DUEL_CHALLENGER_MULT} ставки), "
+                f"у тебя {ch_bal.balance}"
             )
+        op_bal = _get_or_create_balance(session, opponent.id, chat_id)
+        # Безденежного вызвать можно: ставит сколько есть (хоть 0).
+        opponent_stake = max(0, min(stake, op_bal.balance))
 
         # эскроу обоих
-        ch_bal.balance -= stake
+        ch_bal.balance -= challenger_stake
         ch_bal.updated_at = datetime.utcnow()
-        op_bal.balance -= stake
+        op_bal.balance -= opponent_stake
         op_bal.updated_at = datetime.utcnow()
 
         d = Duel(
@@ -343,12 +350,13 @@ def duel_chat_sync(
         )
         session.add(d)
         session.flush()
-        _log_tx(session, challenger.id, chat_id, -stake,
+        _log_tx(session, challenger.id, chat_id, -challenger_stake,
                 kind="duel_stake_hold", ref_id=str(d.id))
-        _log_tx(session, opponent.id, chat_id, -stake,
-                kind="duel_stake_hold", ref_id=str(d.id))
+        if opponent_stake:
+            _log_tx(session, opponent.id, chat_id, -opponent_stake,
+                    kind="duel_stake_hold", ref_id=str(d.id))
 
-        pool = stake * 2
+        pool = challenger_stake + opponent_stake
         commission = max(1, math.ceil(pool * DUEL_FEE_PCT / 100.0))
         prize = pool - commission
         winner = _rng.choice([challenger, opponent])
@@ -376,12 +384,16 @@ def duel_chat_sync(
         result = {
             "id": int(d.id),
             "stake": stake,
+            "challenger_stake": challenger_stake,
+            "opponent_stake": opponent_stake,
             "prize": prize,
             "commission": commission,
             "challenger_tg": int(challenger.tg_id),
             "opponent_tg": int(opponent.tg_id),
             "winner_tg": int(winner.tg_id),
             "loser_tg": int(loser.tg_id),
+            "challenger_name": _name(challenger),
+            "opponent_name": _name(opponent),
             "winner_name": _name(winner),
             "loser_name": _name(loser),
         }
