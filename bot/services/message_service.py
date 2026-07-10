@@ -41,7 +41,13 @@ def save_message(tg_message):
             chat_id=tg_message.chat.id,
             user_id=user.id,
             text=tg_message.text,
-            emojis="".join([e for e in tg_message.text if emoji.is_emoji(e)]) if tg_message.text else None,
+            # для стикер-сообщений храним эмодзи стикера — по нему подбираем
+            # релевантный стикер в «муте бота» (relevant_sticker).
+            emojis=(
+                "".join(e for e in tg_message.text if emoji.is_emoji(e))
+                if tg_message.text
+                else (tg_message.sticker.emoji if tg_message.sticker else None)
+            ),
             sticker=tg_message.sticker.file_id if tg_message.sticker else None,
             media=tg_message.photo[-1].file_id if tg_message.photo else None,
             reply_to=tg_message.reply_to_message.message_id if tg_message.reply_to_message else None,
@@ -110,23 +116,62 @@ def save_reaction(event):
         session.close()
 
 
-def random_recent_sticker(chat_id: int, days: int = 7) -> str | None:
-    """Случайный sticker file_id из отправленных в чате за последние `days`
-    дней. None, если стикеров нет. Для «мута бота» (/duelbot): бот отвечает
-    рандомным недавним стикером вместо болтовни."""
+# sentiment_label (NLP от воркера) → корзина эмодзи для подбора стикера по тону.
+_SENTIMENT_EMOJI = {
+    "positive": ["😂", "😁", "😊", "🔥", "👍", "❤️", "😎", "🥰", "💪", "🎉"],
+    "negative": ["😢", "😭", "😡", "💀", "🤬", "😔", "😩", "🙄", "😤", "🤡"],
+    "neutral": ["🤔", "😐", "🤷", "👀", "🫠", "😶"],
+}
+
+
+def _emojis_in(text: str | None) -> list[str]:
+    if not text:
+        return []
+    return list({c for c in text if emoji.is_emoji(c)})
+
+
+def _recent_chat_sentiment(session, chat_id: int, cutoff) -> str | None:
+    """Доминирующий sentiment_label чата за окно (из посчитанного воркером)."""
+    row = (
+        session.query(Message.sentiment_label, func.count(Message.id))
+        .filter(
+            Message.chat_id == chat_id,
+            Message.sentiment_label.isnot(None),
+            Message.created_at >= cutoff,
+        )
+        .group_by(Message.sentiment_label)
+        .order_by(func.count(Message.id).desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
+def relevant_sticker(chat_id: int, text: str | None = None, days: int = 7) -> str | None:
+    """Стикер file_id из отправленных в чате за `days` дней, подобранный к
+    сообщению: сперва по эмодзи в тексте, затем по тону чата (sentiment),
+    иначе рандом. None — если стикеров в чате нет. Для «мута бота» (/duelbot)."""
     session = SessionLocal()
     try:
         cutoff = datetime.utcnow() - timedelta(days=days)
-        row = (
-            session.query(Message.sticker)
-            .filter(
-                Message.chat_id == chat_id,
-                Message.sticker.isnot(None),
-                Message.created_at >= cutoff,
-            )
-            .order_by(func.random())
-            .first()
+        base = session.query(Message.sticker).filter(
+            Message.chat_id == chat_id,
+            Message.sticker.isnot(None),
+            Message.created_at >= cutoff,
         )
+        # 1. эмодзи из самого сообщения
+        wanted = _emojis_in(text)
+        if wanted:
+            row = base.filter(Message.emojis.in_(wanted)).order_by(func.random()).first()
+            if row:
+                return row[0]
+        # 2. тон чата → корзина эмодзи
+        bucket = _SENTIMENT_EMOJI.get(_recent_chat_sentiment(session, chat_id, cutoff) or "", [])
+        if bucket:
+            row = base.filter(Message.emojis.in_(bucket)).order_by(func.random()).first()
+            if row:
+                return row[0]
+        # 3. любой недавний
+        row = base.order_by(func.random()).first()
         return row[0] if row else None
     finally:
         session.close()

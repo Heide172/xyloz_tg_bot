@@ -15,7 +15,7 @@ from aiogram.types import Message
 
 from common.logger.logger import get_logger
 from services.duel_mute_registry import is_bot_muted
-from services.message_service import random_recent_sticker
+from services.message_service import relevant_sticker
 from services.twin_reply import (
     ENABLED as TWIN_ENABLED,
     craft_reply_sync,
@@ -104,7 +104,7 @@ async def _maybe_reply(message: Message) -> None:
     # Бот проиграл кому-то в /duelbot → он сам в муте: вместо болтовни отвечает
     # рандомным недавним стикером чата (нет стикеров — молчит).
     if is_bot_muted(chat_id):
-        file_id = await asyncio.to_thread(random_recent_sticker, chat_id)
+        file_id = await asyncio.to_thread(relevant_sticker, chat_id, message.text)
         if file_id:
             try:
                 await message.bot.send_sticker(
