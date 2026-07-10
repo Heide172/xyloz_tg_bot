@@ -30,14 +30,17 @@ from services.duel_service import (
     DUEL_RING_COOLDOWN_MIN,
     duel_chat_sync,
 )
+from services.admin_service import is_admin_tg_id
 from services.markets_service import InsufficientFunds, InvalidArgument
 from services.mute_service import (
     apply_duel_mute,
     bot_admin_rights,
     is_already_muted,
     is_soft_muted,
+    is_tag_admin,
     member_status,
     mute_strategy,
+    unmute_now,
 )
 from services.user_card_service import resolve_user_for_card
 
@@ -239,3 +242,129 @@ async def cmd_duel(msg: types.Message):
         )
     lines.append(f"🧹 Ринг закрыт на отмывание — {DUEL_RING_COOLDOWN_MIN} мин без дуэлей.")
     await msg.answer("\n".join(lines))
+
+
+# ---------------- ручная модерация: /mute /unmute ----------------
+
+
+def _display_name(user) -> str:
+    if user.username:
+        return "@" + user.username
+    return user.fullname or f"id{user.tg_id}"
+
+
+def _parse_minutes(args: list[str], default: int) -> int:
+    """Первый токен-длительность: '10' (мин), '10m', '2h', '1d'. Иначе дефолт."""
+    for tok in args:
+        t = tok.strip().lower()
+        try:
+            if t.endswith("m"):
+                mins = int(t[:-1])
+            elif t.endswith("h"):
+                mins = int(t[:-1]) * 60
+            elif t.endswith("d"):
+                mins = int(t[:-1]) * 1440
+            elif t.isdigit():
+                mins = int(t)
+            else:
+                continue
+        except ValueError:
+            continue
+        return max(1, min(mins, 366 * 1440))  # Telegram: 30с..366д
+    return default
+
+
+async def _is_moderator(msg: types.Message) -> bool:
+    """Бот-админ (BOT_ADMIN_IDS) или реальный админ чата (не тег-холдер)."""
+    if not msg.from_user:
+        return False
+    if is_admin_tg_id(msg.from_user.id):
+        return True
+    member = await member_status(msg.bot, msg.chat.id, msg.from_user.id)
+    if member is None:
+        return False
+    if member.status == "creator":
+        return True
+    return member.status == "administrator" and not is_tag_admin(member)
+
+
+async def _resolve_target(msg: types.Message):
+    text = msg.text or ""
+    parts = text.split()
+    arg_text = " ".join(parts[1:]) if len(parts) > 1 else None
+    reply = msg.reply_to_message
+    reply_to_tg_id = reply.from_user.id if reply and reply.from_user else None
+    return await asyncio.to_thread(
+        resolve_user_for_card, msg.chat.id, arg_text, None, reply_to_tg_id
+    )
+
+
+@router.message(Command("mute", ignore_case=True))
+async def cmd_mute(msg: types.Message):
+    if msg.chat.type not in ("group", "supergroup"):
+        await msg.reply("Только в групповом чате.")
+        return
+    if not await _is_moderator(msg):
+        await msg.reply("Команда только для модераторов чата.")
+        return
+
+    bot = msg.bot
+    chat_id = msg.chat.id
+    minutes = _parse_minutes((msg.text or "").split()[1:], DUEL_MUTE_MINUTES)
+
+    target = await _resolve_target(msg)
+    if target is None or not target.tg_id:
+        await msg.reply("Кого мутим? Ответь на сообщение игрока или укажи @ник.")
+        return
+    target_tg = int(target.tg_id)
+
+    bot_rights = await bot_admin_rights(bot, chat_id)
+    if bot_rights is None:
+        await msg.reply("Бот должен быть админом чата.")
+        return
+    member = await member_status(bot, chat_id, target_tg)
+    if is_already_muted(chat_id, member):
+        await msg.reply("Игрок уже в муте — сними /unmute, чтобы перевыдать.")
+        return
+    strat = mute_strategy(member)
+    if strat == "absent":
+        await msg.reply("Игрока нет в чате.")
+        return
+    if strat == "bot":
+        await msg.reply("Ботов не мутим.")
+        return
+    right = _RIGHT_FOR_STRATEGY.get(strat)
+    if right and not getattr(bot_rights, right[0], False):
+        await msg.reply(f"Не могу: боту нужно право «{right[1]}».")
+        return
+
+    ok, err = await apply_duel_mute(bot, chat_id, target_tg, minutes, member)
+    if ok:
+        await msg.reply(
+            f"🔇 {_display_name(target)} в муте на {minutes} мин — только стикеры."
+        )
+    else:
+        await msg.reply(f"Не вышло замутить: {err}")
+
+
+@router.message(Command("unmute", ignore_case=True))
+async def cmd_unmute(msg: types.Message):
+    if msg.chat.type not in ("group", "supergroup"):
+        await msg.reply("Только в групповом чате.")
+        return
+    if not await _is_moderator(msg):
+        await msg.reply("Команда только для модераторов чата.")
+        return
+
+    target = await _resolve_target(msg)
+    if target is None or not target.tg_id:
+        await msg.reply("Кого размутить? Ответь на сообщение игрока или укажи @ник.")
+        return
+
+    ok, err = await unmute_now(msg.bot, msg.chat.id, int(target.tg_id))
+    if ok:
+        await msg.reply(f"🔊 {_display_name(target)} размучен.")
+    elif err == "не в муте":
+        await msg.reply(f"{_display_name(target)} и так не в муте.")
+    else:
+        await msg.reply(f"Не вышло: {err}")

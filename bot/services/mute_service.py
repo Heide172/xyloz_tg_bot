@@ -176,6 +176,71 @@ async def apply_duel_mute(
     return ok, err
 
 
+def _open_permissions() -> ChatPermissions:
+    """Вернуть обычные права участника (снять мут)."""
+    return ChatPermissions(
+        can_send_messages=True,
+        can_send_audios=True,
+        can_send_documents=True,
+        can_send_photos=True,
+        can_send_videos=True,
+        can_send_video_notes=True,
+        can_send_voice_notes=True,
+        can_send_polls=True,
+        can_send_other_messages=True,
+        can_add_web_page_previews=True,
+        can_invite_users=True,
+        can_change_info=False,
+        can_pin_messages=False,
+        can_manage_topics=False,
+    )
+
+
+async def unmute_now(bot: Bot, chat_id: int, tg_id: int) -> tuple[bool, str | None]:
+    """Снять дуэль-мут досрочно (ручной /unmute). Возвращает права/тег как
+    при обычном истечении. (False, 'не в муте') если человек не замучен."""
+    from services import duel_mute_registry as reg
+    from services.tag_rental_service import active_title_for_tg
+    from services.tag_service import restore_admin_now, set_title
+
+    mute = reg.get_mute(chat_id, tg_id)
+    was_soft = is_soft_muted(chat_id, tg_id)
+    if not mute and not was_soft:
+        return False, "не в муте"
+
+    pending = reg.pending_tag(chat_id, tg_id)
+    kind = (mute or {}).get("kind", "soft" if was_soft else "native")
+    rights = (mute or {}).get("rights") or {}
+    saved_title = (mute or {}).get("title") or ""
+
+    try:
+        if kind == "hard_admin" and rights:
+            # промоут сам снимает restrict; чистим реестр только при успехе
+            title = pending or active_title_for_tg(chat_id, tg_id) or saved_title
+            ok, err = await restore_admin_now(bot, chat_id, tg_id, rights, title)
+            if not ok:
+                return False, err
+            reg.clear_mute(chat_id, tg_id)
+            reg.clear_pending_tag(chat_id, tg_id)
+            return True, None
+
+        if kind == "native":
+            await bot.restrict_chat_member(
+                chat_id=chat_id, user_id=tg_id,
+                permissions=_open_permissions(),
+                use_independent_chat_permissions=True,
+            )
+        # снимаем состояние ДО set_title, иначе тег снова уйдёт в очередь
+        reg.clear_mute(chat_id, tg_id)
+        reg.clear_pending_tag(chat_id, tg_id)
+        _soft_muted.pop((chat_id, tg_id), None)
+        if pending:
+            await set_title(bot, chat_id, tg_id, pending)
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+
 async def member_status(bot: Bot, chat_id: int, tg_id: int) -> ChatMember | None:
     """get_chat_member или None при ошибке (юзер не в чате и т.п.)."""
     try:
