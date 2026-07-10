@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import PixelImg from '$lib/PixelImg.svelte';
   import { api } from '$lib/api';
   import { fmtCoins } from '$lib/format';
   import { haptic, openInvoice, showAlert } from '$lib/tg';
@@ -309,23 +310,130 @@
     }
   }
 
-  // ---------- арена (PvP-бой) ----------
-  let arenaOpen = false;
+  // ---------- арена: пиксельный бой с проигрыванием лога ----------
   let arenaBusy = false;
-  let arenaResult: any = null;
   let ladder: any[] | null = null;
+  let showRoster = false; // тоггл редактора состава
+
+  interface Unit {
+    char_id: string;
+    name: string;
+    rarity: string;
+    position: string;
+    maxhp: number;
+    hp: number;
+    dead: boolean;
+    attacking: boolean;
+    hit: boolean;
+    healing: boolean;
+    pop: string | null;
+    popKind: string;
+    popKey: number;
+  }
+  let unitsA: Unit[] = [];
+  let unitsB: Unit[] = [];
+  let playing = false;
+  let battleBanner: 'win' | 'loss' | null = null;
+  let battleInfo: string | null = null;
+
+  const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const artOf = (cid: string) => itemMap[cid]?.asset ?? `/gacha/${cid}.webp`;
+  // чиби-спрайт, если положен в /gacha/sprites/<id>.png; иначе откат на портрет
+  const spriteOf = (cid: string) => `/gacha/sprites/${cid}.png`;
+
+  // суммарная HP вражеской стороны — для «боссовой» полосы
+  $: enemyHpPct =
+    unitsB.length
+      ? (unitsB.reduce((s, u) => s + Math.max(0, u.hp), 0) /
+          unitsB.reduce((s, u) => s + u.maxhp, 0)) *
+        100
+      : 100;
+
+  function mkUnit(u: any): Unit {
+    return {
+      char_id: u.char_id, name: u.name, rarity: u.rarity, position: u.position,
+      maxhp: u.maxhp, hp: u.maxhp, dead: false, attacking: false, hit: false,
+      healing: false, pop: null, popKind: '', popKey: 0
+    };
+  }
+
+  function applyHit(units: Unit[], idx: number, dmg: number) {
+    const u = units[idx];
+    if (!u || u.dead) return;
+    u.hp = Math.max(0, u.hp - dmg);
+    u.hit = true;
+    u.pop = `-${dmg}`;
+    u.popKind = 'dmg';
+    u.popKey++;
+    if (u.hp <= 0) u.dead = true;
+    unitsA = unitsA;
+    unitsB = unitsB;
+    setTimeout(() => {
+      u.hit = false;
+      unitsA = unitsA;
+      unitsB = unitsB;
+    }, 200);
+  }
+  function applyHeal(units: Unit[], idx: number, heal: number) {
+    const u = units[idx];
+    if (!u || u.dead) return;
+    u.hp = Math.min(u.maxhp, u.hp + heal);
+    u.healing = true;
+    u.pop = `+${heal}`;
+    u.popKind = 'heal';
+    u.popKey++;
+    unitsA = unitsA;
+    unitsB = unitsB;
+    setTimeout(() => {
+      u.healing = false;
+      unitsA = unitsA;
+      unitsB = unitsB;
+    }, 350);
+  }
+
+  async function playBattle(res: any) {
+    playing = true;
+    battleBanner = null;
+    battleInfo = null;
+    unitsA = (res.sides?.a ?? []).map(mkUnit);
+    unitsB = (res.sides?.b ?? []).map(mkUnit);
+    await delay(450);
+    for (const ev of res.log ?? []) {
+      const actors = ev.side === 'a' ? unitsA : unitsB;
+      const foes = ev.side === 'a' ? unitsB : unitsA;
+      const actor = actors[ev.actor];
+      if (actor && !actor.dead) {
+        actor.attacking = true;
+        unitsA = unitsA;
+        unitsB = unitsB;
+      }
+      await delay(150);
+      if (ev.action === 'attack') applyHit(foes, ev.target, ev.dmg);
+      else if (ev.action === 'aoe') for (const t of ev.targets ?? []) applyHit(foes, t.idx, t.dmg);
+      else if (ev.action === 'heal' || ev.action === 'guard') applyHeal(actors, ev.target, ev.heal);
+      if (actor) {
+        actor.attacking = false;
+        unitsA = unitsA;
+        unitsB = unitsB;
+      }
+      await delay(130);
+    }
+    battleBanner = res.result;
+    const rw = res.rewards;
+    battleInfo = `${res.rounds} раундов · +${rw?.gems ?? 0} ◆ · +${rw?.exp_each ?? 0} exp · ELO ${res.elo} (${res.elo_delta >= 0 ? '+' : ''}${res.elo_delta})`;
+    if (col) col = { ...col, gems: res.gems };
+    haptic(res.result === 'win' ? 'success' : 'warning');
+    playing = false;
+    refresh();
+  }
 
   async function fightArena() {
-    if (arenaBusy) return;
+    if (arenaBusy || playing) return;
     arenaBusy = true;
     try {
       if (teamDirty) await saveTeam();
       const r = await api.gachaArena();
-      arenaResult = r;
-      arenaOpen = true;
-      if (col) col = { ...col, gems: r.gems };
-      haptic(r.result === 'win' ? 'success' : 'warning');
-      refresh();
+      await playBattle(r);
     } catch (e: any) {
       showAlert(e?.message ?? 'Ошибка');
       haptic('error');
@@ -335,19 +443,13 @@
   }
 
   async function matchmake() {
-    if (arenaBusy) return;
+    if (arenaBusy || playing) return;
     arenaBusy = true;
     try {
       if (teamDirty) await saveTeam();
       const r = await api.gachaPvpQueue();
-      if (r.matched) {
-        arenaResult = r;
-        arenaOpen = true;
-        haptic(r.result === 'win' ? 'success' : 'warning');
-        refresh();
-      } else {
-        toast('В очереди — бой начнётся, как найдётся соперник');
-      }
+      if (r.matched && r.sides) await playBattle(r);
+      else toast('В очереди — бой начнётся, как найдётся соперник');
     } catch (e: any) {
       showAlert(e?.message ?? 'Ошибка');
     } finally {
@@ -471,6 +573,11 @@
 <svelte:head>
   <link rel="stylesheet" href="/gacha/fonts.css" />
   <link rel="stylesheet" href="/gacha/fx.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link
+    rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&family=Press+Start+2P&display=swap"
+  />
 </svelte:head>
 
 <div class="g-root">
@@ -638,91 +745,170 @@
 
       <!-- ===================== АРЕНА (СБОРКА + БОЙ) ===================== -->
       {#if tab === 'arena'}
-        <div class="g-pad">
+        <div class="g-pad px-wrap">
           <div class="g-team-head">
             <div>
-              <b>Боевой состав</b>
-              <div class="g-sub">{teamSlots.length}/{teamSizeMax} · 💪 {fmtCoins(teamPower)} · ELO {col.pvp_elo} ({col.pvp_wins}/{col.pvp_losses})</div>
+              <b class="px-title">АРЕНА</b>
+              <div class="g-sub">💪 {fmtCoins(teamPower)} · ELO {col.pvp_elo} ({col.pvp_wins}/{col.pvp_losses})</div>
             </div>
-            <button class="g-save" disabled={!teamDirty || teamSaving} on:click={saveTeam}>
-              {teamDirty ? 'Сохранить' : 'Сохранено ✓'}
-            </button>
-          </div>
-
-          <div class="g-form">
-            <div class="g-form-row">
-              <div class="g-form-cap">🛡 Фронт <span class="g-sub">принимает удар первым</span></div>
-              <div class="g-form-slots">
-                {#each frontSlots as s (s.char_id)}
-                  {@const it = itemMap[s.char_id]}
-                  <div class="g-tcard" style="border-color:{RAR[it?.rarity]?.color ?? '#555'}">
-                    <img src={it?.asset} alt={it?.name} on:error={imgErr} />
-                    <div class="g-tcard-name">{it?.name}</div>
-                    <div class="g-tcard-ctl">
-                      <button on:click={() => toggleRow(s.char_id)} title="в бэк">↧</button>
-                      <button on:click={() => removeFromTeam(s.char_id)} title="убрать">✕</button>
-                    </div>
-                  </div>
-                {/each}
-                {#if !frontSlots.length}<div class="g-form-empty">пусто — поставь танков сюда</div>{/if}
-              </div>
-            </div>
-            <div class="g-form-row">
-              <div class="g-form-cap">🎯 Бэк <span class="g-sub">бьёт из-за фронта</span></div>
-              <div class="g-form-slots">
-                {#each backSlots as s (s.char_id)}
-                  {@const it = itemMap[s.char_id]}
-                  <div class="g-tcard" style="border-color:{RAR[it?.rarity]?.color ?? '#555'}">
-                    <img src={it?.asset} alt={it?.name} on:error={imgErr} />
-                    <div class="g-tcard-name">{it?.name}</div>
-                    <div class="g-tcard-ctl">
-                      <button on:click={() => toggleRow(s.char_id)} title="во фронт">↥</button>
-                      <button on:click={() => removeFromTeam(s.char_id)} title="убрать">✕</button>
-                    </div>
-                  </div>
-                {/each}
-                {#if !backSlots.length}<div class="g-form-empty">пусто — дамагеры сюда</div>{/if}
-              </div>
-            </div>
-          </div>
-
-          <div class="g-roster-h">Твои карты — нажми, чтобы добавить/убрать</div>
-          {#if !ownedItems.length}
-            <div class="g-sub" style="padding:8px 2px">Пока нет карт — собери их в крутке.</div>
-          {/if}
-          <div class="g-roster">
-            {#each ownedItems as it (it.char_id)}
-              {@const inTeam = teamSlots.some((s) => s.char_id === it.char_id)}
-              <button
-                class="g-rcard"
-                class:inteam={inTeam}
-                style="border-color:{RAR[it.rarity].color}"
-                on:click={() => (inTeam ? removeFromTeam(it.char_id) : addToTeam(it))}
-              >
-                <img src={it.asset} alt={it.name} on:error={imgErr} />
-                <span class="g-rcard-lvl">Ур{it.level}</span>
-                {#if inTeam}<span class="g-rcard-on">✓</span>{/if}
+            {#if showRoster}
+              <button class="g-save" disabled={!teamDirty || teamSaving} on:click={saveTeam}>
+                {teamDirty ? 'Сохранить' : '✓'}
               </button>
-            {/each}
+            {/if}
           </div>
+
+          <!-- пиксельная сцена боя (сайд-вью, как TBH) -->
+          <div class="px-stage">
+            <div class="px-bg sky"></div>
+            <div class="px-bg hills"></div>
+            <div class="px-bg trees"></div>
+            <div class="px-ground"></div>
+
+            <!-- боссовая HP-полоса врага -->
+            <div class="px-boss">
+              <span class="px-boss-skull">☠</span>
+              <div class="px-boss-bar"><div class="px-boss-fill" style="width:{enemyHpPct}%"></div></div>
+              <span class="px-boss-tag">АКТ 1</span>
+            </div>
+
+            <div class="px-field">
+              <!-- враги слева, лицом вправо -->
+              <div class="px-group foe">
+                {#if unitsB.length}
+                  {#each unitsB as u, i (i)}
+                    <div class="px-fig foe" class:dead={u.dead} class:atk={u.attacking} class:hit={u.hit} class:heal={u.healing}>
+                      {#if u.pop}{#key u.popKey}<div class="px-pop {u.popKind}">{u.pop}</div>{/key}{/if}
+                      <div class="px-hp"><div class="px-hp-fill" style="width:{u.maxhp ? (u.hp / u.maxhp) * 100 : 0}%"></div></div>
+                      <div class="px-sprite foe" style="--rc:{RAR[u.rarity]?.color ?? '#888'}">
+                        <PixelImg src={spriteOf(u.char_id)} fallback={artOf(u.char_id)} px={56} alt={u.name} />
+                      </div>
+                      <div class="px-shadow"></div>
+                    </div>
+                  {/each}
+                {:else}
+                  <div class="px-fig foe idle-foe">
+                    <div class="px-sprite foe boss"><span class="px-skull">☠</span></div>
+                    <div class="px-shadow"></div>
+                  </div>
+                {/if}
+              </div>
+
+              <!-- герои справа, лицом влево -->
+              <div class="px-group hero">
+                {#if unitsA.length}
+                  {#each unitsA as u, i (i)}
+                    <div class="px-fig hero" class:dead={u.dead} class:atk={u.attacking} class:hit={u.hit} class:heal={u.healing}>
+                      {#if u.pop}{#key u.popKey}<div class="px-pop {u.popKind}">{u.pop}</div>{/key}{/if}
+                      <div class="px-hp"><div class="px-hp-fill" style="width:{u.maxhp ? (u.hp / u.maxhp) * 100 : 0}%"></div></div>
+                      <div class="px-sprite hero" style="--rc:{RAR[u.rarity]?.color ?? '#888'}">
+                        <PixelImg src={spriteOf(u.char_id)} fallback={artOf(u.char_id)} px={56} alt={u.name} />
+                      </div>
+                      <div class="px-shadow"></div>
+                    </div>
+                  {/each}
+                {:else if teamSlots.length}
+                  {#each teamSlots as s (s.char_id)}
+                    {@const it = itemMap[s.char_id]}
+                    <div class="px-fig hero">
+                      <div class="px-sprite hero" style="--rc:{RAR[it?.rarity]?.color ?? '#888'}">
+                        <PixelImg src={spriteOf(s.char_id)} fallback={artOf(s.char_id)} px={56} alt={it?.name} />
+                      </div>
+                      <div class="px-shadow"></div>
+                    </div>
+                  {/each}
+                {:else}
+                  <div class="px-empty">Собери состав ↓</div>
+                {/if}
+              </div>
+            </div>
+
+            {#if battleBanner}
+              <div class="px-banner {battleBanner}">{battleBanner === 'win' ? 'ПОБЕДА' : 'ПОРАЖЕНИЕ'}</div>
+            {/if}
+          </div>
+          {#if battleInfo}<div class="px-info">{battleInfo}</div>{/if}
 
           <div class="g-arena-fight">
-            <button class="g-pull x10" disabled={arenaBusy || !teamSlots.length} on:click={fightArena}>
-              <span class="g-pull-h">⚔ В бой (×бот)</span>
-              <span class="g-pull-c">{arenaBusy ? 'бой…' : 'мгновенно'}</span>
+            <button class="g-pull x10" disabled={arenaBusy || playing || !teamSlots.length} on:click={fightArena}>
+              <span class="g-pull-h">⚔ В бой</span>
+              <span class="g-pull-c">{playing ? 'идёт…' : '×бот'}</span>
             </button>
-            <button class="g-pull x1" disabled={arenaBusy || !teamSlots.length} on:click={matchmake}>
+            <button class="g-pull x1" disabled={arenaBusy || playing || !teamSlots.length} on:click={matchmake}>
               <span class="g-pull-h">Матчмейк</span>
-              <span class="g-pull-c gold">PvP-очередь</span>
+              <span class="g-pull-c gold">PvP</span>
             </button>
           </div>
-          <button class="g-ladder-btn" on:click={openLadder}>🏆 Ладдер чата</button>
+          <div class="g-arena-row">
+            <button class="g-ladder-btn" on:click={openLadder}>🏆 Ладдер</button>
+            <button class="g-ladder-btn" on:click={() => (showRoster = !showRoster)}>
+              {showRoster ? 'Скрыть состав' : '⚙ Состав'}
+            </button>
+          </div>
           {#if ladder}
             <div class="g-ladder">
               {#each ladder as row, i (row.user_id)}
                 <div class="g-ladder-row"><span>{i + 1}. {row.name}</span><span>{row.elo} · {row.wins}/{row.losses}</span></div>
               {/each}
               {#if !ladder.length}<div class="g-sub" style="text-align:center">Пока пусто</div>{/if}
+            </div>
+          {/if}
+
+          {#if showRoster}
+            <div class="g-form">
+              <div class="g-form-row">
+                <div class="g-form-cap">🛡 Фронт <span class="g-sub">принимает удар первым</span></div>
+                <div class="g-form-slots">
+                  {#each frontSlots as s (s.char_id)}
+                    {@const it = itemMap[s.char_id]}
+                    <div class="g-tcard" style="border-color:{RAR[it?.rarity]?.color ?? '#555'}">
+                      <img src={it?.asset} alt={it?.name} on:error={imgErr} />
+                      <div class="g-tcard-name">{it?.name}</div>
+                      <div class="g-tcard-ctl">
+                        <button on:click={() => toggleRow(s.char_id)} title="в бэк">↧</button>
+                        <button on:click={() => removeFromTeam(s.char_id)} title="убрать">✕</button>
+                      </div>
+                    </div>
+                  {/each}
+                  {#if !frontSlots.length}<div class="g-form-empty">пусто — поставь танков сюда</div>{/if}
+                </div>
+              </div>
+              <div class="g-form-row">
+                <div class="g-form-cap">🎯 Бэк <span class="g-sub">бьёт из-за фронта</span></div>
+                <div class="g-form-slots">
+                  {#each backSlots as s (s.char_id)}
+                    {@const it = itemMap[s.char_id]}
+                    <div class="g-tcard" style="border-color:{RAR[it?.rarity]?.color ?? '#555'}">
+                      <img src={it?.asset} alt={it?.name} on:error={imgErr} />
+                      <div class="g-tcard-name">{it?.name}</div>
+                      <div class="g-tcard-ctl">
+                        <button on:click={() => toggleRow(s.char_id)} title="во фронт">↥</button>
+                        <button on:click={() => removeFromTeam(s.char_id)} title="убрать">✕</button>
+                      </div>
+                    </div>
+                  {/each}
+                  {#if !backSlots.length}<div class="g-form-empty">пусто — дамагеры сюда</div>{/if}
+                </div>
+              </div>
+            </div>
+            <div class="g-roster-h">Твои карты — нажми, чтобы добавить/убрать</div>
+            {#if !ownedItems.length}
+              <div class="g-sub" style="padding:8px 2px">Пока нет карт — собери их в крутке.</div>
+            {/if}
+            <div class="g-roster">
+              {#each ownedItems as it (it.char_id)}
+                {@const inTeam = teamSlots.some((s) => s.char_id === it.char_id)}
+                <button
+                  class="g-rcard"
+                  class:inteam={inTeam}
+                  style="border-color:{RAR[it.rarity].color}"
+                  on:click={() => (inTeam ? removeFromTeam(it.char_id) : addToTeam(it))}
+                >
+                  <img src={it.asset} alt={it.name} on:error={imgErr} />
+                  <span class="g-rcard-lvl">Ур{it.level}</span>
+                  {#if inTeam}<span class="g-rcard-on">✓</span>{/if}
+                </button>
+              {/each}
             </div>
           {/if}
         </div>
@@ -1013,50 +1199,6 @@
     </div>
   {/if}
 
-  <!-- ===================== АРЕНА (РЕЗУЛЬТАТ БОЯ) ===================== -->
-  {#if arenaOpen && arenaResult}
-    <div
-      class="g-detail"
-      style="background:radial-gradient(70% 70% at 50% 38%,{arenaResult.result === 'win' ? 'rgba(127,208,160,.18)' : 'rgba(255,80,90,.16)'},rgba(0,0,0,.95))"
-    >
-      <button class="g-detail-x" on:click={() => { arenaOpen = false; ladder = null; }}>✕</button>
-      <div class="g-arena">
-        <div class="g-arena-h" style="color:{arenaResult.result === 'win' ? '#7fd0a0' : '#ff6f7c'}">
-          {arenaResult.result === 'win' ? 'Победа!' : 'Поражение'}
-        </div>
-        <div class="g-sub" style="text-align:center">
-          {arenaResult.rounds} раундов{#if arenaResult.rewards} · +{arenaResult.rewards.gems} ◆ · +{arenaResult.rewards.exp_each} exp{/if}{#if arenaResult.elo != null} · ELO {arenaResult.elo}{#if arenaResult.elo_delta != null} ({arenaResult.elo_delta >= 0 ? '+' : ''}{arenaResult.elo_delta}){/if}{/if}
-        </div>
-        <div class="g-arena-teams">
-          <div class="g-arena-side">
-            <div class="g-arena-cap">Ты</div>
-            {#each arenaResult.team as c (c.char_id)}
-              <div class="g-arena-card" style="border-color:{RAR[c.rarity].color}"><img src={charById(c.char_id)?.asset} alt={c.char_id} on:error={imgErr} /></div>
-            {/each}
-          </div>
-          <div class="g-arena-vs">VS</div>
-          <div class="g-arena-side">
-            <div class="g-arena-cap">Соперник</div>
-            {#each arenaResult.enemy as c, i (i)}
-              <div class="g-arena-card" style="border-color:{RAR[c.rarity].color}"><img src={charById(c.char_id)?.asset} alt={c.char_id} on:error={imgErr} /></div>
-            {/each}
-          </div>
-        </div>
-        <div class="g-arena-actions">
-          <button class="g-rb ghost" on:click={fightArena} disabled={arenaBusy}>Ещё бой</button>
-          <button class="g-rb gold" on:click={openLadder}>Ладдер</button>
-        </div>
-        {#if ladder}
-          <div class="g-ladder">
-            {#each ladder as row, i (row.user_id)}
-              <div class="g-ladder-row"><span>{i + 1}. {row.name}</span><span>{row.elo} · {row.wins}/{row.losses}</span></div>
-            {/each}
-            {#if !ladder.length}<div class="g-sub" style="text-align:center">Пока пусто</div>{/if}
-          </div>
-        {/if}
-      </div>
-    </div>
-  {/if}
 
   <!-- ===================== TOAST ===================== -->
   {#if toastMsg}
@@ -2763,6 +2905,311 @@
     font-weight: 700;
     font-size: 13px;
     cursor: pointer;
+  }
+
+  /* ===================== пиксельная арена (сайд-вью, TBH) ===================== */
+  .px-wrap,
+  .px-stage,
+  .px-info,
+  .px-boss,
+  .px-pop,
+  .px-banner,
+  .px-empty {
+    font-family: 'Pixelify Sans', 'Press Start 2P', monospace;
+  }
+  .px-title {
+    font-family: 'Pixelify Sans', monospace;
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #ffce5e;
+    text-shadow: 1px 1px 0 #000;
+  }
+  .g-arena-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .g-arena-row .g-ladder-btn {
+    margin-top: 0;
+  }
+  .px-stage {
+    position: relative;
+    height: 240px;
+    overflow: hidden;
+    border: 3px solid #2a1d12;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 2px #11140f, inset 0 0 0 4px #b8923f, 0 6px 22px rgba(0, 0, 0, 0.55);
+    image-rendering: pixelated;
+  }
+  /* параллакс-фон (лесные сумерки) */
+  .px-bg {
+    position: absolute;
+    inset: 0;
+  }
+  .px-bg.sky {
+    background: linear-gradient(180deg, #14313a 0%, #1c4a4a 45%, #2f6157 72%, #3c5f3f 100%);
+  }
+  .px-bg.hills {
+    bottom: 46px;
+    top: auto;
+    height: 120px;
+    background:
+      radial-gradient(60px 40px at 20% 100%, #16323a 60%, transparent 62%),
+      radial-gradient(80px 52px at 55% 100%, #122b32 60%, transparent 62%),
+      radial-gradient(70px 46px at 88% 100%, #16323a 60%, transparent 62%);
+    opacity: 0.9;
+  }
+  .px-bg.trees {
+    bottom: 40px;
+    top: auto;
+    height: 96px;
+    background-image: repeating-linear-gradient(
+      90deg,
+      transparent 0 8px,
+      rgba(7, 20, 18, 0.9) 8px 10px,
+      transparent 10px 26px,
+      rgba(10, 26, 22, 0.85) 26px 34px,
+      transparent 34px 48px
+    );
+    -webkit-mask-image: linear-gradient(180deg, transparent, #000 40%);
+    mask-image: linear-gradient(180deg, transparent, #000 40%);
+    opacity: 0.75;
+  }
+  .px-ground {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 46px;
+    background: repeating-linear-gradient(90deg, #3a2e1f 0 14px, #322617 14px 28px);
+    border-top: 4px solid #5a7a3a;
+    box-shadow: inset 0 5px 0 rgba(0, 0, 0, 0.3);
+  }
+  /* боссовая HP-полоса */
+  .px-boss {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 72%;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 4;
+  }
+  .px-boss-skull {
+    color: #ff5a6a;
+    font-size: 14px;
+    text-shadow: 1px 1px 0 #000;
+  }
+  .px-boss-bar {
+    flex: 1;
+    height: 12px;
+    background: #1a0d0d;
+    border: 2px solid #000;
+    box-shadow: inset 0 0 0 1px #5a2b2b;
+    overflow: hidden;
+    image-rendering: pixelated;
+  }
+  .px-boss-fill {
+    height: 100%;
+    background: repeating-linear-gradient(90deg, #ff3b3b 0 10px, #d12626 10px 12px);
+    transition: width 0.25s linear;
+    box-shadow: 0 0 8px rgba(255, 60, 60, 0.5);
+  }
+  .px-boss-tag {
+    font-size: 11px;
+    color: #ffce5e;
+    text-shadow: 1px 1px 0 #000;
+    white-space: nowrap;
+  }
+  /* поле боя */
+  .px-field {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 30px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    padding: 0 14px;
+    z-index: 3;
+  }
+  .px-group {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+  }
+  .px-group.hero {
+    flex-direction: row-reverse;
+  }
+  .px-fig {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    transition: transform 0.14s ease;
+  }
+  .px-fig.hero.atk {
+    transform: translateX(-16px);
+  }
+  .px-fig.foe.atk {
+    transform: translateX(16px);
+  }
+  .px-fig.dead {
+    opacity: 0.2;
+    filter: grayscale(1);
+  }
+  .px-fig.dead .px-sprite {
+    animation: none;
+  }
+  .px-sprite {
+    position: relative;
+    width: 50px;
+    height: 50px;
+    border: 2px solid var(--rc, #888);
+    background: rgba(8, 10, 16, 0.55);
+    box-shadow: 0 0 0 2px #0a0a12;
+    overflow: hidden;
+    animation: pxbob 1.7s steps(2) infinite;
+    image-rendering: pixelated;
+  }
+  .px-sprite.foe :global(.pixel-canvas) {
+    transform: scaleX(-1);
+  }
+  .px-sprite.boss {
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-color: #ff5a6a;
+  }
+  .px-skull {
+    font-size: 40px;
+    filter: drop-shadow(2px 2px 0 #000);
+  }
+  .px-fig.hit .px-sprite {
+    animation: pxhit 0.2s steps(2);
+    box-shadow: 0 0 0 2px #fff, 0 0 12px #fff;
+  }
+  .px-fig.heal .px-sprite {
+    box-shadow: 0 0 0 2px #7fe07f, 0 0 12px #7fe07f;
+  }
+  .px-shadow {
+    width: 40px;
+    height: 8px;
+    margin-top: -3px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.45);
+    filter: blur(1px);
+  }
+  .px-hp {
+    width: 44px;
+    height: 5px;
+    margin-bottom: 3px;
+    background: #11131a;
+    border: 1px solid #000;
+  }
+  .px-hp-fill {
+    height: 100%;
+    background: linear-gradient(180deg, #8bf07a, #36a83a);
+    transition: width 0.2s linear;
+  }
+  .px-pop {
+    position: absolute;
+    left: 50%;
+    top: -10px;
+    transform: translateX(-50%);
+    font-size: 14px;
+    font-weight: 700;
+    pointer-events: none;
+    text-shadow: 1px 1px 0 #000;
+    animation: pxpop 0.9s ease-out forwards;
+    z-index: 6;
+  }
+  .px-pop.dmg {
+    color: #ff5a6a;
+  }
+  .px-pop.heal {
+    color: #8bf07a;
+  }
+  .px-empty {
+    font-size: 12px;
+    color: #cfd3db;
+    align-self: center;
+    padding-bottom: 8px;
+  }
+  .px-banner {
+    position: absolute;
+    left: 50%;
+    top: 44%;
+    transform: translate(-50%, -50%);
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    padding: 8px 18px;
+    border: 3px solid #000;
+    background: rgba(10, 8, 14, 0.85);
+    text-shadow: 2px 2px 0 #000;
+    animation: pxbanner 0.4s steps(3) both;
+    z-index: 7;
+  }
+  .px-banner.win {
+    color: #8bf07a;
+    box-shadow: 0 0 0 2px #8bf07a;
+  }
+  .px-banner.loss {
+    color: #ff5a6a;
+    box-shadow: 0 0 0 2px #ff5a6a;
+  }
+  .px-info {
+    margin-top: 8px;
+    text-align: center;
+    font-size: 12px;
+    color: #cfd3db;
+  }
+  @keyframes pxbob {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-3px);
+    }
+  }
+  @keyframes pxhit {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    50% {
+      transform: translateX(3px);
+    }
+  }
+  @keyframes pxpop {
+    0% {
+      opacity: 0;
+      transform: translate(-50%, 6px);
+    }
+    25% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+      transform: translate(-50%, -28px);
+    }
+  }
+  @keyframes pxbanner {
+    0% {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.6);
+    }
+    100% {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
   }
 
   /* toast */

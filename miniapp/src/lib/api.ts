@@ -1,4 +1,5 @@
 import { getChatId, getInitData } from './tg';
+import { mockEnabled, mockRequest } from './devmock';
 import { seedFromMe, setBalance, sniffBalance } from './balance';
 import { track } from './analytics';
 import { isDownStatus, markDown, markUp } from './service';
@@ -50,6 +51,9 @@ async function extractError(resp: Response): Promise<string> {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Локальная разработка без бэкенда/Telegram — отдаём мок (см. devmock.ts).
+  if (mockEnabled()) return mockRequest<T>(path, init);
+
   const headers = new Headers(init.headers ?? {});
   headers.set('X-Telegram-Init-Data', getInitData());
   if (init.body && !headers.has('Content-Type')) {

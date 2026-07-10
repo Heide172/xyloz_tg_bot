@@ -32,7 +32,11 @@ export function getChatId(): number | null {
   if (fromStart !== null) return fromStart;
   const params = new URLSearchParams(window.location.search);
   const cid = params.get('chat_id');
-  return cid ? Number(cid) : null;
+  if (cid) return Number(cid);
+  // dev вне Telegram (нет подписанного initData) — фиктивный chat_id,
+  // чтобы не висел warning «chat_id не передан» и работал dev-мок.
+  if (import.meta.env.DEV && !getInitData()) return -1000000001;
+  return null;
 }
 
 /** Целевой роут из start_param (whitelist), для deep-link в раздел. */
