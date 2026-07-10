@@ -19,7 +19,7 @@ from services.market_service import recover_and_snapshot_all
 from services.markets_service import auto_close_expired
 from services.nlp_classifier import classify_pending_once
 from services.nominations_service import run_daily_nominations
-from services.tag_service import expire_nomination_tags, restore_due_duel_tags
+from services.tag_service import expire_nomination_tags, restore_due_duel_admins
 
 logger = get_logger(__name__)
 
@@ -178,12 +178,12 @@ def start_scheduler(bot: Bot) -> AsyncIOScheduler:
         coalesce=True,
         max_instances=1,
     )
-    # Возврат тегов тег-админам после дуэль-мута (истёкшие — раз в минуту).
+    # Возврат прав/тегов админам после дуэль-мута (истёкшие — раз в минуту).
     scheduler.add_job(
-        restore_due_duel_tags,
+        restore_due_duel_admins,
         trigger=IntervalTrigger(minutes=1),
         args=(bot,),
-        id="duel_tag_restore",
+        id="duel_admin_restore",
         coalesce=True,
         max_instances=1,
     )

@@ -7,6 +7,7 @@ Telegram ставит custom_title только админам и максиму
 Используется для авто-тега номинантам (пидор дня и т.п.) и рынка
 аренды тегов.
 """
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -271,24 +272,60 @@ async def expire_nomination_tags(bot: Bot) -> int:
     return cleared
 
 
-# ---------------- возврат тега после дуэль-мута ----------------
+# ---------------- возврат прав/тега после дуэль-мута ----------------
 
 
-def remember_duel_tag_restore(
-    chat_id: int, tg_id: int, until_epoch: int, title: str
+def remember_duel_admin_restore(
+    chat_id: int, tg_id: int, until_epoch: int, title: str, rights: dict
 ) -> None:
-    """Запомнить: тег-админа демоутнули на дуэль-мут, вернуть тег в
-    until_epoch (unix). Значение — 'until:title'; ключ переживает рестарт."""
-    _setting_set(f"duelmute:{chat_id}:{tg_id}", f"{until_epoch}:{title}")
+    """Запомнить: админа разжаловали на дуэль-мут — вернуть его права+тег в
+    until_epoch (unix). Значение — JSON {until,title,rights}; переживает рестарт."""
+    payload = json.dumps({"until": until_epoch, "title": title, "rights": rights})
+    _setting_set(f"duelmute:{chat_id}:{tg_id}", payload)
 
 
-async def restore_due_duel_tags(bot: Bot) -> int:
-    """Вернуть теги тег-админам, чей дуэль-мут истёк (until <= now).
+def forget_duel_admin_restore(chat_id: int, tg_id: int) -> None:
+    """Убрать запись о возврате прав (мут не встал / уже вернули)."""
+    _setting_delete(f"duelmute:{chat_id}:{tg_id}")
 
-    Само мут-ограничение снимает Telegram по until_date; тут только
-    восстанавливаем admin-статус и custom_title. Если у держателя активная
-    аренда — отдаём арендный тег (как expire_nomination_tags). При сбое
-    set_title ключ НЕ удаляем — повторим на следующем тике.
+
+async def restore_admin_now(
+    bot: Bot, chat_id: int, tg_id: int, rights: dict, title: str
+) -> tuple[bool, str | None]:
+    """Вернуть админ-права (promote) и custom_title. Возвращает (ok, error)."""
+    try:
+        await bot.promote_chat_member(chat_id=chat_id, user_id=tg_id, **rights)
+        if title:
+            await bot.set_chat_administrator_custom_title(
+                chat_id=chat_id, user_id=tg_id, custom_title=title[:TITLE_MAX]
+            )
+        return True, None
+    except Exception as exc:
+        msg = str(exc)
+        logger.error("restore_admin failed chat=%s tg=%s: %s", chat_id, tg_id, msg)
+        return False, msg
+
+
+def _parse_duelmute(value: str) -> tuple[int | None, str, dict]:
+    """(until, title, rights) из JSON или старого формата 'until:title'."""
+    try:
+        d = json.loads(value)
+        return int(d["until"]), d.get("title") or "", d.get("rights") or {}
+    except (ValueError, KeyError, TypeError):
+        epoch_str, _, title = value.partition(":")
+        try:
+            return int(epoch_str), title, {"can_invite_users": True}
+        except ValueError:
+            return None, "", {}
+
+
+async def restore_due_duel_admins(bot: Bot) -> int:
+    """Вернуть права/теги тем, чей дуэль-мут истёк (until <= now).
+
+    Само мут-ограничение снимает Telegram по until_date; тут возвращаем
+    admin-статус, права и custom_title. Тег-админам с активной арендой
+    отдаём арендный тег (как expire_nomination_tags). При сбое ключ НЕ
+    удаляем — повторим на следующем тике.
     """
     import time
 
@@ -308,29 +345,29 @@ async def restore_due_duel_tags(bot: Bot) -> int:
         except ValueError:
             _setting_delete(key)
             continue
-        epoch_str, _, saved_title = value.partition(":")
-        try:
-            until = int(epoch_str)
-        except ValueError:
+        until, saved_title, rights = _parse_duelmute(value)
+        if until is None:
             _setting_delete(key)
             continue
         if until > now:
             continue  # мут ещё идёт
 
         title = active_title_for_tg(chat_id, tg_id) or saved_title
-        if not title:
-            _setting_delete(key)  # тега не было — админом оставлять незачем
+        if not rights and not title:
+            _setting_delete(key)  # нечего возвращать
             continue
-        ok, err = await set_title(bot, chat_id, tg_id, title)
+        if not rights and title:
+            rights = {"can_invite_users": True}  # минимальный админ, чтобы держать тег
+        ok, err = await restore_admin_now(bot, chat_id, tg_id, rights, title)
         if ok:
             _setting_delete(key)
             restored += 1
         else:
             failed += 1
             logger.error(
-                "duel tag restore FAILED chat=%s tg=%s: %s (retry next tick)",
+                "duel admin restore FAILED chat=%s tg=%s: %s (retry next tick)",
                 chat_id, tg_id, err,
             )
     if restored or failed:
-        logger.info("duel tag restore: ok=%d failed=%d", restored, failed)
+        logger.info("duel admin restore: ok=%d failed=%d", restored, failed)
     return restored

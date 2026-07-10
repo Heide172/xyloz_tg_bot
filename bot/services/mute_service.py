@@ -1,13 +1,13 @@
-"""Мут участника чата для чат-дуэли.
+"""Мут участника чата для чат-дуэли. Три стратегии по типу проигравшего:
 
-Обычного участника мутим нативно (restrict_chat_member + until_date —
-Telegram снимает ограничение сам).
-
-Тег-админа замутить нативно нельзя: механика тегов (tag_service) делает
-держателя тега настоящим Telegram-админом (promote + custom_title), а
-Telegram запрещает restrict на админов. Поэтому такого сначала демоутим
-(тег слетает), мутим, а тег возвращаем позже через
-tag_service.restore_due_duel_tags (sweep в scheduler).
+- native  — обычный участник: restrict_chat_member + until_date (Telegram
+  снимает сам).
+- hard_admin — админ, которого бот может разжаловать (can_be_edited): снимаем
+  ВСЕ права + тег, мутим, а права/тег возвращаем полностью через
+  tag_service.restore_due_duel_admins (sweep в scheduler).
+- soft    — админ, которого разжаловать нельзя (владелец / назначенный не
+  ботом): нативно не замутить, поэтому бот 15 минут удаляет его не-стикерные
+  сообщения (DuelMuteMiddleware в handlers/duel.py читает is_soft_muted).
 """
 import time
 from datetime import timedelta
@@ -19,54 +19,76 @@ from common.logger.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Реальные админ-права. Механика тегов (tag_service.set_title) выдаёт только
-# can_invite_users; если у редактируемого нами админа нет ни одного из этих
-# прав — это «тег-админ» (косметика), а не модератор.
-_REAL_ADMIN_POWERS = (
+# Полный набор админ-прав — что снимаем при муте и что возвращаем после.
+# Все они валидны и как атрибуты ChatMemberAdministrator, и как kwargs
+# promote_chat_member.
+_ADMIN_RIGHT_FIELDS = (
+    "is_anonymous",
     "can_manage_chat",
     "can_delete_messages",
+    "can_manage_video_chats",
     "can_restrict_members",
     "can_promote_members",
     "can_change_info",
-    "can_pin_messages",
+    "can_invite_users",
     "can_post_messages",
     "can_edit_messages",
-    "can_manage_topics",
-    "can_manage_video_chats",
+    "can_pin_messages",
     "can_post_stories",
     "can_edit_stories",
     "can_delete_stories",
+    "can_manage_topics",
 )
 
+# Софт-мут: (chat_id, tg_id) -> unix-время окончания. In-memory — на рестарте
+# теряется (мут снимается раньше), для 15-минутного наказания это приемлемо
+# и не бьёт по хот-пути middleware (без БД на каждое сообщение).
+_soft_muted: dict[tuple[int, int], float] = {}
 
-def is_tag_admin(member: ChatMember | None) -> bool:
-    """Админ, которого бот назначил только ради тега (custom_title)?
 
-    Признаки: статус administrator, его можно редактировать нами
-    (can_be_edited — значит промоутил бот), и нет ни одного реального
-    админ-права.
-    """
-    if member is None or member.status != "administrator":
+def soft_mute(chat_id: int, tg_id: int, minutes: int) -> None:
+    _soft_muted[(chat_id, tg_id)] = time.time() + minutes * 60
+
+
+def is_soft_muted(chat_id: int, tg_id: int) -> bool:
+    until = _soft_muted.get((chat_id, tg_id))
+    if until is None:
         return False
-    if not getattr(member, "can_be_edited", False):
+    if time.time() >= until:
+        _soft_muted.pop((chat_id, tg_id), None)
         return False
-    return not any(getattr(member, p, False) for p in _REAL_ADMIN_POWERS)
+    return True
 
 
-def mute_block_reason(member: ChatMember | None) -> str | None:
-    """None — участника можно замутить. Иначе код причины:
-    absent | bot | owner | real_admin | muted."""
+def capture_admin_rights(member: ChatMember) -> dict:
+    """Снимок текущих админ-прав (только заданные поля) для точного возврата."""
+    return {
+        f: bool(getattr(member, f))
+        for f in _ADMIN_RIGHT_FIELDS
+        if getattr(member, f, None) is not None
+    }
+
+
+def mute_strategy(member: ChatMember | None) -> str:
+    """'native' | 'hard_admin' | 'soft' | 'absent' | 'bot'."""
     if member is None or member.status in ("left", "kicked"):
         return "absent"
     if member.user and member.user.is_bot:
         return "bot"
+    if member.status == "administrator":
+        return "hard_admin" if getattr(member, "can_be_edited", False) else "soft"
     if member.status == "creator":
-        return "owner"
-    if member.status == "administrator" and not is_tag_admin(member):
-        return "real_admin"
-    if member.status == "restricted" and getattr(member, "can_send_messages", True) is False:
-        return "muted"
-    return None
+        return "soft"  # владельца не разжаловать
+    return "native"  # обычный участник (в т.ч. уже restricted — до-ограничим)
+
+
+def is_already_muted(chat_id: int, member: ChatMember | None) -> bool:
+    if member is None:
+        return False
+    tg = member.user.id if member.user else None
+    if tg is not None and is_soft_muted(chat_id, tg):
+        return True
+    return member.status == "restricted" and getattr(member, "can_send_messages", True) is False
 
 
 def _stickers_only_permissions() -> ChatPermissions:
@@ -111,37 +133,36 @@ async def _restrict(bot: Bot, chat_id: int, tg_id: int, minutes: int) -> tuple[b
 async def apply_duel_mute(
     bot: Bot, chat_id: int, tg_id: int, minutes: int, member: ChatMember | None
 ) -> tuple[bool, str | None]:
-    """Замутить проигравшего на `minutes` минут (только стикеры).
-
-    Тег-админа: снять тег + демоут → restrict → запомнить тег на возврат.
-    Обычного участника — сразу restrict (Telegram снимет по until_date).
-    """
-    if is_tag_admin(member):
-        from services.tag_service import clear_title, remember_duel_tag_restore
+    """Замутить проигравшего на `minutes` минут (только стикеры) по стратегии."""
+    strat = mute_strategy(member)
+    if strat == "soft":
+        soft_mute(chat_id, tg_id, minutes)
+        return True, None
+    if strat == "hard_admin":
+        from services.tag_service import (
+            clear_title,
+            forget_duel_admin_restore,
+            remember_duel_admin_restore,
+            restore_admin_now,
+        )
 
         title = (getattr(member, "custom_title", None) or "").strip()
-        ok, err = await clear_title(bot, chat_id, tg_id)  # demote + снять title
+        rights = capture_admin_rights(member)
+        ok, err = await clear_title(bot, chat_id, tg_id)  # демоут + снять title
         if not ok:
             return False, f"демоут не удался: {err}"
+        # Ключ возврата пишем ДО restrict: если процесс упадёт между демоутом и
+        # restrict, sweep всё равно вернёт права (человек не застрянет разжалованным).
+        until = int(time.time()) + minutes * 60
+        remember_duel_admin_restore(chat_id, tg_id, until, title, rights)
         ok, err = await _restrict(bot, chat_id, tg_id, minutes)
         if not ok:
-            # мут не встал — возвращаем тег, чтобы не оставить человека без него
-            if title:
-                await _rollback_title(bot, chat_id, tg_id, title)
+            forget_duel_admin_restore(chat_id, tg_id)
+            await restore_admin_now(bot, chat_id, tg_id, rights, title)
             return False, err
-        until = int(time.time()) + minutes * 60
-        remember_duel_tag_restore(chat_id, tg_id, until, title)
         return True, None
+    # native (обычный участник)
     return await _restrict(bot, chat_id, tg_id, minutes)
-
-
-async def _rollback_title(bot: Bot, chat_id: int, tg_id: int, title: str) -> None:
-    from services.tag_service import set_title
-
-    try:
-        await set_title(bot, chat_id, tg_id, title)
-    except Exception:
-        logger.exception("rollback set_title failed chat=%s tg=%s", chat_id, tg_id)
 
 
 async def member_status(bot: Bot, chat_id: int, tg_id: int) -> ChatMember | None:
@@ -154,7 +175,7 @@ async def member_status(bot: Bot, chat_id: int, tg_id: int) -> ChatMember | None
 
 
 async def bot_admin_rights(bot: Bot, chat_id: int) -> ChatMember | None:
-    """Член-объект бота, если он админ (для чтения can_restrict/can_promote); иначе None."""
+    """Член-объект бота, если он админ (для чтения can_restrict/promote/delete)."""
     me = await bot.get_me()
     member = await member_status(bot, chat_id, me.id)
     if member is None or member.status != "administrator":

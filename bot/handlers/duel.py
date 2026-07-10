@@ -5,17 +5,19 @@
 DUEL_MUTE_MINUTES минут — может слать только стикеры.
 
 Опасная для баланса механика (форс + деньги), поэтому предчеки идут ДО
-списания: бот — админ с правом мутить, оба участника мутибельны, оппонент
-тянет ставку. Иначе — отказ без движения денег.
+списания: у бота есть права под нужную стратегию мута обоих участников,
+оппонент тянет ставку, никто ещё не в муте. Иначе — отказ без движения денег.
 
-Тег-админов (держателей custom_title из механики тегов) мутить можно:
-apply_duel_mute снимет тег + демоутит + restrict, а тег вернёт sweep
-(tag_service.restore_due_duel_tags). Реальных модераторов/владельца — нет.
+Мутибельны все, кроме отсутствующих и ботов. Стратегия зависит от типа
+проигравшего (mute_service.mute_strategy): обычный участник — нативный
+restrict; админ, кого бот может разжаловать — снять права+тег/restrict/вернуть
+после; владелец и ручные админы (разжаловать нельзя) — софт-мут (удаление
+не-стикерных сообщений через DuelMuteMiddleware).
 """
 import asyncio
 import time
 
-from aiogram import Router, types
+from aiogram import BaseMiddleware, Router, types
 from aiogram.filters import Command
 
 from common.logger.logger import get_logger
@@ -29,9 +31,10 @@ from services.markets_service import InsufficientFunds, InvalidArgument
 from services.mute_service import (
     apply_duel_mute,
     bot_admin_rights,
-    is_tag_admin,
+    is_already_muted,
+    is_soft_muted,
     member_status,
-    mute_block_reason,
+    mute_strategy,
 )
 from services.user_card_service import resolve_user_for_card
 
@@ -42,14 +45,33 @@ router = Router()
 # потеря на рестарте не критична (кулдаун ~минута).
 _last_challenge: dict[tuple[int, int], float] = {}
 
-# Причина отказа (код из mute_block_reason) → текст для оппонента.
-_OPPONENT_BLOCK = {
-    "absent": "Этого игрока нет в чате.",
-    "bot": "Ботов на дуэль не вызывают.",
-    "owner": "Нельзя вызвать владельца чата — его не замутить.",
-    "real_admin": "Нельзя вызвать реального админа — его не трогаем.",
-    "muted": "Игрок уже в муте.",
+# Право бота, нужное под каждую стратегию мута (человекочитаемо для отказа).
+_RIGHT_FOR_STRATEGY = {
+    "native": ("can_restrict_members", "ограничивать участников"),
+    "hard_admin": ("can_promote_members", "назначать администраторов"),
+    "soft": ("can_delete_messages", "удалять сообщения"),
 }
+
+
+class DuelMuteMiddleware(BaseMiddleware):
+    """Софт-мут: 15 минут удаляем не-стикерные сообщения проигравшего, если
+    его нельзя было замутить нативно (владелец / ручной админ)."""
+
+    async def __call__(self, handler, event, data):
+        user = getattr(event, "from_user", None)
+        chat = getattr(event, "chat", None)
+        if (
+            user is not None
+            and chat is not None
+            and event.sticker is None
+            and is_soft_muted(chat.id, user.id)
+        ):
+            try:
+                await event.delete()
+            except Exception:
+                logger.warning("soft-mute delete failed chat=%s user=%s", chat.id, user.id)
+            return None  # съедаем сообщение — дальше не пускаем
+        return await handler(event, data)
 
 
 def _parse_stake(args: list[str]) -> int:
@@ -107,32 +129,38 @@ async def cmd_duel(msg: types.Message):
         return
 
     bot_rights = await bot_admin_rights(bot, chat_id)
-    if bot_rights is None or not getattr(bot_rights, "can_restrict_members", False):
-        await msg.reply(
-            "Не могу мутить: сделайте бота админом с правом ограничивать участников."
-        )
+    if bot_rights is None:
+        await msg.reply("Не могу мутить: бот должен быть админом чата.")
         return
 
     ch_member = await member_status(bot, chat_id, challenger_tg)
     op_member = await member_status(bot, chat_id, opponent_tg)
 
-    op_block = mute_block_reason(op_member)
-    if op_block:
-        await msg.reply(_OPPONENT_BLOCK[op_block])
+    op_strat = mute_strategy(op_member)
+    if op_strat == "absent":
+        await msg.reply("Этого игрока нет в чате.")
         return
-    ch_block = mute_block_reason(ch_member)
-    if ch_block in ("owner", "real_admin"):
-        await msg.reply("Ты сам админ или владелец — тебя не замутить, дуэль недоступна.")
+    if op_strat == "bot":
+        await msg.reply("Ботов на дуэль не вызывают.")
         return
-    if ch_block == "muted":
+    if is_already_muted(chat_id, op_member):
+        await msg.reply("Игрок уже в муте.")
+        return
+
+    ch_strat = mute_strategy(ch_member)
+    if is_already_muted(chat_id, ch_member):
         await msg.reply("Ты сейчас в муте.")
         return
 
-    # Демоут/возврат тега тег-админа требует права назначать администраторов.
-    if (is_tag_admin(op_member) or is_tag_admin(ch_member)) and not getattr(
-        bot_rights, "can_promote_members", False
-    ):
-        await msg.reply("Для мута тег-админа боту нужно право назначать администраторов.")
+    # Проигравшего заранее не знаем — у бота должны быть права под стратегию
+    # мута ОБОИХ участников.
+    missing = set()
+    for strat in (op_strat, ch_strat):
+        right = _RIGHT_FOR_STRATEGY.get(strat)
+        if right and not getattr(bot_rights, right[0], False):
+            missing.add(right[1])
+    if missing:
+        await msg.reply("Не могу мутить: боту нужно право — " + ", ".join(sorted(missing)) + ".")
         return
 
     _last_challenge[key] = now
@@ -165,10 +193,10 @@ async def cmd_duel(msg: types.Message):
         f"Победил {result['winner_name']} (+{result['prize']} гривен).",
     ]
     if ok:
-        tag_note = " (тег вернём после мута)" if is_tag_admin(loser_member) else ""
+        note = " (права вернём после мута)" if mute_strategy(loser_member) == "hard_admin" else ""
         lines.append(
             f"{result['loser_name']} улетает в мут на {DUEL_MUTE_MINUTES} мин — "
-            f"только стикеры.{tag_note} 🤐"
+            f"только стикеры.{note} 🤐"
         )
     else:
         logger.warning(
