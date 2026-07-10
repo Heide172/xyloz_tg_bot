@@ -61,29 +61,48 @@ def save_message(tg_message):
 
 
 def save_reaction(event):
+    """MessageReactionUpdated → строка reactions.
+
+    event.message_id — telegram id, а Reaction.message_id ссылается на
+    внутренний Message.id, поэтому резолвим по (chat_id, telegram_message_id).
+    Аноним/реакция от имени чата/снятие/кастом-эмодзи — пропускаем."""
+    user = getattr(event, "user", None)
+    if user is None:
+        return  # анонимная реакция или от имени чата — не атрибутируем
+
+    emoji_str = None
+    for r in (event.new_reaction or []):
+        e = getattr(r, "emoji", None)  # ReactionTypeEmoji
+        if e:
+            emoji_str = e
+            break
+    if not emoji_str:
+        return  # реакцию сняли или это кастом-эмодзи — не логируем
+
     session = SessionLocal()
-
     try:
-        message_id = event.message_id
-        user_id = event.user.id
+        msg = (
+            session.query(Message)
+            .filter(
+                Message.chat_id == event.chat.id,
+                Message.telegram_message_id == event.message_id,
+            )
+            .first()
+        )
+        if msg is None:
+            return  # сообщение не в нашей истории — привязать не к чему
 
-        # find user
-        user = session.query(User).filter_by(tg_id=user_id).first()
-        if not user:
-            user = User(tg_id=user_id)
-            session.add(user)
+        u = session.query(User).filter_by(tg_id=user.id).first()
+        if not u:
+            u = User(tg_id=user.id, username=user.username, fullname=user.full_name)
+            session.add(u)
             session.flush()
 
-        reaction = Reaction(
-            message_id=message_id,
-            user_id=user.id,
-            emoji=event.new_reaction,
-        )
-
-        session.add(reaction)
+        session.add(Reaction(message_id=msg.id, user_id=u.id, emoji=emoji_str))
         session.commit()
-        logger.info(f"Saved reaction for message {message_id} from user {user_id}")
-
+        logger.info(
+            "Saved reaction %s on msg %s from %s", emoji_str, event.message_id, user.id
+        )
     except Exception as e:
         session.rollback()
         logger.error(f"DB ERROR: {e}", exc_info=True)
